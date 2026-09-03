@@ -50,3 +50,6 @@ Thumbs.db
 .idea/
 .vscode/
 *.swp
+
+# Saved ESPN web session — a live credential
+espn-session.json
