@@ -124,6 +124,32 @@ def rank(
     no_k_dst_until = int(p.get("draft.no_kicker_dst_until_last_n_rounds"))
     bench_spots = room.facts.settings.bench_count
 
+    # §3.7 — the endgame constraint. Once the rounds remaining equal the number
+    # of mandatory starting slots still empty, EVERY remaining pick must fill
+    # one. Without this the picker happily takes a 4th RB in round 12 on raw
+    # VOR and finishes the draft unable to field a D/ST — caught by the
+    # simulator, which is exactly what it is for. A soft bonus cannot fix this:
+    # a spare RB's VOR dwarfs any starting kicker's, so it has to be a hard
+    # legality rule, not a preference.
+    mandatory = _unfilled_mandatory(room, my_pos)
+    must_fill_now = rounds_left <= sum(mandatory.values())
+
+    # Flex capacity still open, for the surplus discount below.
+    flex_open = _flex_open(room, my_pos)
+
+    # How much of our remaining draft capital the outstanding starting holes
+    # represent. 0 = plenty of room, 1 = every remaining pick is spoken for.
+    # K and D/ST are excluded from both sides: they are deliberately deferred
+    # to the last rounds (§3.7), so counting them would make every middle
+    # round look like an emergency.
+    skill_holes = sum(
+        n for pos, n in mandatory.items() if pos not in (Pos.K, Pos.DST)
+    ) + flex_open
+    usable_picks = max(1, rounds_left - len(
+        [pos for pos in (Pos.K, Pos.DST) if pos in mandatory]
+    ))
+    hole_pressure = min(1.0, skill_holes / usable_picks)
+
     out: list[Candidate] = []
     for player, val in avail:
         o = outlooks[player.pos]
@@ -163,23 +189,69 @@ def rank(
                 score += bump
                 reasons["run_wait"] = bump
 
-        # §3.7 — never take K or D/ST before the final rounds.
-        if player.pos in (Pos.K, Pos.DST) and rounds_left > no_k_dst_until:
+        # §3.7 — the endgame constraint, applied before anything else can
+        # outweigh it. Anyone who does not fill a mandatory hole is illegal.
+        if must_fill_now and player.pos not in mandatory:
+            score -= 1e6
+            reasons["endgame_must_fill"] = -1e6
+            notes.append(f"must fill {'/'.join(x.value for x in mandatory)}")
+
+        # §3.7 — never take K or D/ST before the final rounds, UNLESS the
+        # endgame rule above says this is the moment.
+        elif player.pos in (Pos.K, Pos.DST) and rounds_left > no_k_dst_until:
             score -= 1e6
             reasons["too_early_k_dst"] = -1e6
             notes.append("K/DST too early")
 
-        # §3.7 — a second QB in a 1QB league is close to worthless.
-        if player.pos is Pos.QB and my_pos.get(Pos.QB, 0) >= 1:
-            if not room.facts.settings.is_superflex:
-                score -= 0.55 * max(val.vor, 1.0) + 15.0
-                reasons["backup_qb"] = -(0.55 * max(val.vor, 1.0) + 15.0)
+        # §3.7 — SURPLUS DISCOUNT. VOR measures a player against the starter
+        # you'd otherwise field at his position. Once that slot is already
+        # filled, the next man at the same position is not worth his VOR — he
+        # is worth bye cover and injury insurance, which is far less.
+        #
+        # Without this the engine stacks a position it cannot start. Caught by
+        # the simulator taking TE1, TE2 and TE3 in rounds 2-4 of a one-TE
+        # league: all three graded highly on VOR because TE replacement level
+        # is low, and two of them could never leave the bench.
+        surplus_mult = _surplus_multiplier(room, player.pos, my_pos, flex_open)
+        if surplus_mult < 1.0:
+            # A bench body's value is a FRACTION OF HIS UPSIDE, never a negative
+            # number. An earlier version wrote `-(1 - mult) * max(vor, 0)`,
+            # which meant a saturated-position player with negative VOR took no
+            # penalty at all and passed straight through at face value. That is
+            # how the engine ended up preferring a third-string tight end to a
+            # wide receiver in a lineup that had no wide receivers.
+            effective = surplus_mult * max(val.vor, 0.0)
+            delta = effective - val.vor
+            score += delta
+            reasons["surplus"] = delta
+            if surplus_mult <= 0.25:
+                notes.append(f"{player.pos.value} already covered")
 
-        # §3.7 — starting-lineup holes come before depth. A team with no TE in
-        # round 10 has a real problem; a fourth WR does not fix it.
-        need = _starting_hole(room, player.pos, my_pos)
-        if need > 0 and rounds_left <= _slots_left_to_fill(room, my_pos) + 2:
-            bump = 0.18 * val.vor * need
+            # ...but zero is still too generous while a starting slot is empty.
+            # In the dead rounds every remaining player grades below replacement,
+            # so a bench body floored at 0 outranks a genuine starter sitting at
+            # -30 — which is how a backup QB beat a receiver on a roster with
+            # one receiver. Spending a pick on depth while a slot is open has a
+            # real cost, and this is it.
+            if hole_pressure > 0:
+                oppo = -_BENCH_OPPORTUNITY_COST * hole_pressure
+                score += oppo
+                reasons["depth_while_short"] = oppo
+
+        # §3.7 — starting-lineup holes come before depth.
+        #
+        # An EMPTY starting slot scores zero points, not replacement-level
+        # points, and VOR cannot see that: it measures a player against the
+        # starter you'd otherwise field, and assumes there is one. So filling a
+        # genuine hole earns a bonus scaled by the player's real point
+        # contribution and by how much of our remaining draft capital the
+        # outstanding holes represent.
+        #
+        # The previous gate (`rounds_left <= slots_left + 2`) never fired in the
+        # middle rounds, which left the engine indifferent between a wide
+        # receiver and a third tight end while it had no wide receivers at all.
+        if _starting_hole(room, player.pos, my_pos) > 0 and hole_pressure > 0:
+            bump = _HOLE_WEIGHT * val.points * hole_pressure
             score += bump
             reasons["fills_hole"] = bump
 
@@ -223,8 +295,93 @@ def _starting_hole(room: RoomModel, pos: Pos, have) -> int:
     return max(0, room.facts.settings.starters_at(pos) - have.get(pos, 0))
 
 
+def _unfilled_mandatory(room: RoomModel, have) -> dict[Pos, int]:
+    """Dedicated starting slots still empty, by position.
+
+    Flex is excluded on purpose: any spare RB/WR/TE fills it, so it is never a
+    position-specific obligation. These are the slots that will leave the team
+    unable to field a legal lineup if the draft ends without them.
+    """
+    out: dict[Pos, int] = {}
+    for slot in room.facts.settings.starting_slots:
+        if slot.is_flex:
+            continue
+        pos = slot.eligible[0]
+        need = max(0, slot.count - have.get(pos, 0))
+        if need:
+            out[pos] = need
+    return out
+
+
+#: What a bench body is worth, as a fraction of his VOR — roughly the share of
+#: weeks he can actually reach our starting lineup.
+#:
+#: Split by how many starting slots his position has, because that drives how
+#: often a backup plays. A bench RB in a 2-RB-plus-flex league covers byes and
+#: the near-certainty of an RB injury: call it 4 weeks of 14. A bench TE in a
+#: one-TE league plays on the bye and almost never again.
+#:
+#: [v1 priors] — §7 moves these.
+#: How much a player's raw projected points count toward filling an empty
+#: starting slot. [v1 prior]
+_HOLE_WEIGHT = 0.15
+
+#: Season points forgone by spending a pick on bench depth while a starting
+#: slot is still empty. [v1 prior]
+_BENCH_OPPORTUNITY_COST = 25.0
+
+_SURPLUS_LADDER_DEEP = (0.30, 0.12, 0.05)    # position has 2+ starting slots
+_SURPLUS_LADDER_SHALLOW = (0.15, 0.06, 0.02)  # position has 1 starting slot
+
+#: Positions a flex slot can absorb.
+_FLEX_POSITIONS = (Pos.RB, Pos.WR, Pos.TE)
+
+
+def _flex_open(room: RoomModel, have) -> int:
+    """Flex slots not yet covered by a spare RB/WR/TE already on the roster."""
+    settings = room.facts.settings
+    flex_slots = sum(s.count for s in settings.starting_slots if s.is_flex)
+    spare = sum(
+        max(0, have.get(pos, 0) - settings.starters_at(pos)) for pos in _FLEX_POSITIONS
+    )
+    return max(0, flex_slots - spare)
+
+
+def _surplus_multiplier(room: RoomModel, pos: Pos, have, flex_open: int) -> float:
+    """How much of this player's VOR actually reaches our starting lineup.
+
+    1.0 while he fills a dedicated starting slot, still 1.0 if he slots into an
+    open flex, then falls away down the ladder for pure bench depth.
+    """
+    settings = room.facts.settings
+    count = have.get(pos, 0)
+
+    if count < settings.starters_at(pos):
+        return 1.0
+    if pos in _FLEX_POSITIONS and flex_open > 0:
+        return 1.0
+
+    depth = count - settings.starters_at(pos)
+    if pos in _FLEX_POSITIONS:
+        depth -= sum(s.count for s in settings.starting_slots if s.is_flex)
+    depth = max(0, depth)
+
+    ladder = (
+        _SURPLUS_LADDER_DEEP
+        if settings.starters_at(pos) >= 2
+        else _SURPLUS_LADDER_SHALLOW
+    )
+    return ladder[min(depth, len(ladder) - 1)]
+
+
 def _slots_left_to_fill(room: RoomModel, have) -> int:
-    """Total unfilled starting slots across the roster."""
-    total = sum(s.count for s in room.facts.settings.starting_slots)
-    filled = sum(have.values())
-    return max(0, total - filled)
+    """Total unfilled starting slots, counted per position rather than by
+    headcount — a roster of six WRs has not filled the TE slot."""
+    settings = room.facts.settings
+    dedicated_gap = sum(_unfilled_mandatory(room, have).values())
+    flex_slots = sum(s.count for s in settings.starting_slots if s.is_flex)
+    flex_eligible_spare = sum(
+        max(0, have.get(pos, 0) - settings.starters_at(pos))
+        for pos in (Pos.RB, Pos.WR, Pos.TE)
+    )
+    return dedicated_gap + max(0, flex_slots - flex_eligible_spare)
