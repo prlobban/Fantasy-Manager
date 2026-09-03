@@ -47,20 +47,34 @@ lineup:
   unconfirmed_status_bench_minutes: 90
 
 waivers:
-  # §5.3 — the FAAB ladder, as % of the ORIGINAL season budget.
-  ladder:
-    immediate_starter: [25, 50]
-    weekly_flex_upgrade: [8, 15]
-    upside_stash: [3, 7]
-    streamer: [0, 2]
-    own_rb1_handcuff: [5, 10]
-  # §5.4 — never drop below this % of budget before this week.
-  budget_floor_pct: 15
-  budget_floor_until_week: 10
+  # This league is ROLLING PRIORITY, not FAAB (read from mSettings 2026-09-03:
+  # WAIVERS_TRADITIONAL, isUsingAcquisitionBudget: False). §5.3.
+  #
+  # §5.3.1 — the bar a claim must clear, by the priority position we hold.
+  # Units are projected points per week of improvement to a STARTING slot.
+  priority_ladder:
+    top:                       # positions 1-3
+      max_position: 3
+      min_weekly_gain: 3.0
+    middle:                    # positions 4-7
+      max_position: 7
+      min_weekly_gain: 1.5
+    bottom:                    # positions 8+
+      max_position: 99
+      min_weekly_gain: 0.1
+
+  # §5.3.3 — never spend a claim this good on a one-week streamer.
+  streamer_priority_floor: 3
+
   # §5.5 — never drop a top-N player by ROS VOR.
   never_drop_top_n: 5
-  # §5.5 — keep an injured player if he returns within this many weeks.
+  # §5.5 — keep an injured player if he returns within this many weeks
+  # AND a bench spot exists. With 4 bench spots it often will not.
   keep_injured_return_within_weeks: 4
+
+  # If this league is ever switched to FAAB, write a ladder here and delete
+  # priority_ladder. Do NOT run one system's numbers through the other.
+  faab_ladder: null
 
 trades:
   # §6.1 — outgoing rate limits.

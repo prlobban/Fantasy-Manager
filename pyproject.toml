@@ -5,7 +5,7 @@ description = "ESPN Fantasy Football draft + season manager. Deterministic core,
 requires-python = ">=3.12"
 dependencies = [
     "espn-api>=0.45.0",     # ESPN read client. READ-ONLY — it has no POST methods.
-    "nflreadpy>=0.2.0",     # nflverse loaders. Replaces the archived nfl_data_py.
+    "nflreadpy>=0.1.5",     # nflverse loaders. Replaces the archived nfl_data_py.
     "polars>=1.0",          # nflreadpy returns polars
     "playwright>=1.47",     # the only write path that exists
     "pydantic>=2.8",        # schemas for everything crossing a boundary

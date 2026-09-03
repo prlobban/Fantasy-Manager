@@ -180,12 +180,17 @@ needs. Two adjustments:
   skipped.
 
 **§3.7 Roster construction constraints** (hard, applied after `§3.4`):
+- **ESPN's own position caps are absolute** — read from `rosterSettings.positionLimits`, never
+  assumed. *This league: QB 2 · RB 4 · WR 6 · TE 3 · K 2 · D/ST 2.* A pick that would breach a cap
+  is illegal, not merely unwise, and must never enter the queue.
 - Never take K or D/ST before the final `[v1 prior: 2]` rounds. They are replacement-level by
   definition and streamable all season.
 - One QB (two only if the format is superflex — read it, `§3.1`).
 - Don't draft two starting-lineup players at the same position who share a bye week.
-- Late rounds are for **upside, not depth**: a backup with a path to a starting job beats a known
-  8-point-a-week bench body. Roster spots are cheap; ceilings are not.
+- **Late rounds are for upside — but bench depth is a hard budget.** *This league has 4 bench
+  spots.* With a bench that shallow, a pure lottery ticket competes directly with the bye-week
+  cover for a starter. Take the swing only when the roster can absorb the week it costs us;
+  in a deep-bench league the balance tips the other way.
 - Handcuff *our own* elite RB before handcuffing anyone else's.
 
 **§3.8 Log every pick as it happens** — player taken, the runner-up we passed on, the reason, and
@@ -225,32 +230,52 @@ first-three-rounds pick, that's a signal to check the model before trusting it.
 
 ## §5 — Waivers & free agents
 
-**§5.1 Read the waiver system first** (`mSettings`): FAAB vs rolling priority, budget, run day, lock
-time. The rules below assume FAAB; on rolling priority substitute *"is this worth burning my #1
-claim"* for every bid amount.
+**§5.1 Read the waiver system first** (`mSettings`), every time. **This league, read 2026-09-03:
+`WAIVERS_TRADITIONAL` with `isUsingAcquisitionBudget: False` — ROLLING PRIORITY, not FAAB.** There
+is no bidding. 24-hour claim window, claims process every day except Tuesday, waiver order resets.
+*If a future league is FAAB, a bid ladder must be written then — do not retrofit bid amounts onto a
+priority system.*
 
 **§5.2 The bar to claim.** A pickup must beat `§2` for **the player it replaces**, not the roster
-average. Adding a WR5 who never starts is a nothing move that costs a roster spot.
+average. Adding a WR5 who never starts is a nothing move that costs a roster spot — and with only
+**4 bench spots** in this league, a roster spot is genuinely scarce.
 
-**§5.3 The FAAB ladder** `[v1 priors — all % of the *original* season budget]`:
+### §5.3 — Rolling priority: the currency is your place in the queue
 
-| Archetype | Bid |
-|---|---|
-| Immediate every-week starter (a lead back who just inherited the job) | 25–50%, higher early-season when the need is real |
-| Weekly flex / clear upgrade to a starting slot | 8–15% |
-| High-upside stash (path to a job, not there yet) | 3–7% |
-| Streamer (this-week QB / TE / D-ST / K) | 0–2% |
-| Handcuff to our own RB1 | 5–10% |
+With no budget, the only cost of a claim is **dropping to the back of the waiver order.** Priority
+is a one-shot asset that regenerates slowly, so the question is never *"is this player good?"* but
+***"is he worth being last in line for the next one?"***
 
-**§5.4 Spend early, but keep powder.** Never drop below `[v1 prior: 15%]` of budget remaining before
-`[v1 prior: week 10]`. The season-changing pickup usually isn't in week 2, and a manager at $0 in
-week 9 has no answers left.
+**§5.3.1 The claim ladder** `[v1 priors]` — claim only if the player clears the bar for the priority
+position we currently hold:
+
+| Our priority | Claim only for | Why |
+|---|---|---|
+| **Top 3** | An immediate every-week starter, or a starting-slot upgrade worth `[v1 prior: ≥3.0]` projected pts/wk | High priority is the most valuable waiver asset we own. Spending it on a streamer is the classic error. |
+| **Middle (4–7)** | A starting-slot upgrade worth `[v1 prior: ≥1.5]` pts/wk, or a high-upside stash with a real path to a job | Cheap to spend, slow to regain. |
+| **Bottom (8–10)** | Anything that improves the roster at all | We're last anyway; the claim costs nothing we haven't already lost. |
+
+**§5.3.2 Free agents are free.** A player who has cleared waivers costs **no priority**. Add those
+any day on the §5.2 bar alone. Never burn a claim on someone who becomes a free agent in 24 hours
+unless a rival is visibly chasing him.
+
+**§5.3.3 Never spend top-3 priority on a one-week streamer.** A week-9 D/ST is not worth the
+season's best claim. Take the free-agent streamer instead, even if he's slightly worse.
+
+**§5.3.4 Stack claims by value, not by hope.** Claims process in priority order and only the first
+success consumes our position. Order them strictly by §2 value so the best available outcome is the
+one we actually spend on.
+
+**§5.4 Bench scarcity is the real budget.** Four bench spots and hard position caps (`§3.7`) mean
+almost every add forces a drop. **The dropped player's value is part of the cost of the claim** —
+compute the net, never the gross.
 
 **§5.5 Never drop:** a top-`[v1 prior: 5]` player on the roster by ROS VOR; an injured player with a
-return inside `[v1 prior: 4 weeks]` if a bench spot exists; or the handcuff to our own RB1.
+return inside `[v1 prior: 4 weeks]` **if a bench spot exists** (with 4 spots it often won't, and
+that is a real decision rather than an automatic hold); or the handcuff to our own RB1.
 
-**§5.6 Daily scan, weekly action.** The sweep runs daily per `§1.3`, but most claims should land in
-the waiver run after the week's games. Free-agent adds (no waiver period) can fire any day.
+**§5.6 Daily scan, daily action.** The sweep runs daily per `§1.3`. This league processes waivers
+every day but Tuesday, so a claim rarely waits for a weekly run. Free-agent adds fire any day.
 
 ---
 
@@ -436,18 +461,29 @@ disagrees with itself, say so in the log. A confident wrong number is worse than
 
 ## §9 — Open questions (do NOT invent answers)
 
-*(Resolved 2026-09-03: snake confirmed · incoming trades authorised under the `§6.8` gauntlet ·
-$30 buy-in, money league.)*
+*(Resolved 2026-09-03 by interview: snake confirmed · incoming trades authorised under the `§6.8`
+gauntlet · $30 buy-in, money league.)*
 
-1. **Keepers or dynasty?** If so, the ROS window in `§2.1` is wrong and values change materially.
-   → read `mSettings`.
-2. **Does playoff seeding reward points-for?** Changes `§4.2` for already-decided matchups.
-3. **Trade deadline date** — after it, `§6` shuts off entirely and waiver strategy changes.
-   → read `mSettings`.
-4. **Number of playoff teams and which weeks** — sets when `§2.9`'s playoff pivot triggers.
-   → read `mSettings`.
-5. **Every `[v1 prior]` in this document is unvalidated.** `§7` is the mechanism that validates
+*(Resolved 2026-09-03 by reading `mSettings` — **Big Johnson League**, 10 teams:)*
+
+1. ~~Keepers or dynasty?~~ **No keepers** (`keeperCount: 0`). The ROS window in `§2.1` is correct.
+2. ~~Does playoff seeding reward points-for?~~ **Yes — `playoffSeedingRule: TOTAL_POINTS_SCORED`.**
+   Points-for decides seeding, so in an already-decided matchup we still play for maximum points
+   rather than coasting. `§4.2`'s floor branch does **not** mean "leave points on the bench."
+3. ~~Trade deadline?~~ **2026-12-02.** Unlimited trades, 24-hour revision window, 5 veto votes.
+4. ~~Playoff teams and weeks?~~ **6 of 10**, 14-week regular season, 1-week matchups → **weeks
+   15/16/17.** `§2.9`'s playoff pivot targets those.
+5. **Waivers are rolling priority, not FAAB** — `§5.3` rewritten accordingly.
+6. **90 seconds per pick**, not 60. The `§3.2` "don't think on the clock" rule stands regardless;
+   the extra 30s is margin, not licence to add a model call.
+
+**Still open:**
+
+7. **Every `[v1 prior]` in this document is unvalidated.** `§7` is the mechanism that validates
    them; none have run yet.
+8. **The 24-hour trade revision window** (new, 09-03) means an accepted trade is not instantly
+   final. `§6.8` is unchanged — the gauntlet still decides — but a mistake has a recovery path that
+   the section was written without knowing about.
 
 ---
 
