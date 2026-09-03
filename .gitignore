@@ -1,0 +1,52 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# THIS REPO IS PUBLIC. Deny-by-default for anything that could carry a
+# credential or live league data. When in doubt, add it here first.
+# ─────────────────────────────────────────────────────────────────────────────
+
+# Credentials — never, under any name
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*token*.json
+*cookie*
+*secret*
+*credential*
+
+# Live data: board, state, decisions, caches, screenshots, agent transcripts.
+# All of it is derived and none of it belongs in a public repo.
+data/*
+!data/.gitkeep
+
+# Anything ESPN hands back verbatim
+*.har
+dom-snapshot*.html
+
+# Python
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+dist/
+build/
+
+# Playwright
+.playwright/
+playwright-report/
+test-results/
+
+# Logs
+*.log
+logs/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp

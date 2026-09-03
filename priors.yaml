@@ -1,0 +1,88 @@
+# Every [v1 prior] from docs/fantasy-playbook.md, in one place.
+#
+# These are STARTING WEIGHTS, not truths. They were chosen to be reasonable, not
+# proven. §7 is the loop that moves them, and §7.4 says a confirmed bias updates
+# the number HERE and nowhere else. Nothing may hardcode any of these values.
+#
+# Each key cites the section it implements. If you change one, date it in
+# docs/operating-log-2026-season.md and say why in that week's history file.
+
+model:
+  # §2.4 — a tier ends where the drop to the next player exceeds this multiple
+  # of the median gap inside the tier.
+  tier_break_gap_multiple: 1.5
+
+  # §2.5 — hard veto: suspended past this week is undraftable.
+  suspension_veto_after_week: 6
+
+  # §2.7 — weather only matters for outdoor games from this week on.
+  weather_from_week: 12
+
+  # Agent's pre-draft news pass may move a player's value by at most ±this
+  # fraction. Bounds the one place a model touches the board (§3.2, predraft).
+  override_cap: 0.15
+
+draft:
+  # §3.3 — how many players to keep in the live ESPN queue at all times.
+  queue_depth: 12
+
+  # §3.6 — a positional run is on when this many of the last N picks are one position.
+  run_detect_count: 3
+  run_detect_window: 5
+
+  # §3.7 — never take K or D/ST before the final N rounds.
+  no_kicker_dst_until_last_n_rounds: 2
+
+  # Board is stale if older than this (hours) at draft time.
+  board_max_age_hours: 3
+
+lineup:
+  # §4.2 — projected margin thresholds that switch us to floor / ceiling.
+  floor_margin_pts: 12
+  ceiling_margin_pts: 12
+  # How much projected value we'll give up to buy the preferred variance.
+  floor_max_points_sacrificed: 1.5
+  ceiling_max_points_sacrificed: 2.0
+  # §4.3 — bench anyone without a confirmed status this close to kickoff (minutes).
+  unconfirmed_status_bench_minutes: 90
+
+waivers:
+  # §5.3 — the FAAB ladder, as % of the ORIGINAL season budget.
+  ladder:
+    immediate_starter: [25, 50]
+    weekly_flex_upgrade: [8, 15]
+    upside_stash: [3, 7]
+    streamer: [0, 2]
+    own_rb1_handcuff: [5, 10]
+  # §5.4 — never drop below this % of budget before this week.
+  budget_floor_pct: 15
+  budget_floor_until_week: 10
+  # §5.5 — never drop a top-N player by ROS VOR.
+  never_drop_top_n: 5
+  # §5.5 — keep an injured player if he returns within this many weeks.
+  keep_injured_return_within_weeks: 4
+
+trades:
+  # §6.1 — outgoing rate limits.
+  max_proposals_per_day: 1
+  max_proposals_per_week: 3
+  max_open_offers_per_manager: 1
+  no_repropose_days: 14
+  # §6.5 — never trade a top-N asset for a package of lesser parts.
+  protected_top_n: 3
+
+  # §6.8 — the anti-fleece gauntlet on INCOMING offers.
+  gauntlet:
+    # §6.8.1 — minimum gain in projected ROS starting-lineup points.
+    min_starting_points_gain: 8
+    # §6.8.4 — an offer this soon after news on any involved player is
+    # presumed information arbitrage.
+    news_window_hours: 48
+    # §6.8.6 — on a 1-for-many, the best incoming player must be within this
+    # fraction of the outgoing player's ROS VOR.
+    consolidation_tolerance: 0.10
+    # §6.8.9 — never accept sooner than this after receipt (minutes).
+    cooldown_minutes: 60
+    # §6.8.10 — caps.
+    max_accepts_per_week: 1
+    same_manager_cooldown_days: 14
