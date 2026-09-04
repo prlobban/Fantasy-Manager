@@ -55,7 +55,8 @@ class LeakageError(AssertionError):
 
 def build_board(season: Season, *, facts: LeagueFacts | None = None,
                 injury_history: bool = True,
-                market_ranks: dict[int, int] | None = None) -> Board:
+                market_ranks: dict[int, int] | None = None,
+                projections: dict[int, object] | None = None) -> Board:
     """A board for `season`, built the way the live board is built.
 
     Deliberately reuses `value_pool` — the same function the real draft runs on
@@ -70,6 +71,13 @@ def build_board(season: Season, *, facts: LeagueFacts | None = None,
     if market_ranks:
         market.blend(season.players, market_ranks,
                      float(priors().get("model.market_blend")))
+
+    # §P — our own projection, blended AFTER the consensus so both are mixed
+    # into one number before valuation, exactly as the live board does it.
+    if projections:
+        from core.proj import apply as proj_apply
+        proj_apply.blend(season.players, projections,
+                         float(priors().get("model.projection_blend")))
 
     contexts: dict[int, PlayerContext] = {}
     matched = 0

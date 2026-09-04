@@ -32,6 +32,13 @@ model:
   # than STANDARD (3.65 vs 4.22).
   market_rank_type: PPR
 
+  # §P — our own opportunity-based projection (core/proj), blended into the
+  # board the same way the consensus board is. 0.0 = inert: the model is built,
+  # fitted and measured, but the live board is exactly what it was until this
+  # clears the all-blocks gate in docs/projection-model-plan.md §1.
+  projection_blend: 0.0
+  projection_model: data/proj-model.json
+
 draft:
   # §3.3 — how many players to keep in the live ESPN queue at all times.
   queue_depth: 8

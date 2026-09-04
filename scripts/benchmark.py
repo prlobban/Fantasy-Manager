@@ -15,8 +15,16 @@ For each season and each of ESPN's two published rankings:
 Holding the seat, pool, scoring and opponents fixed is what makes the delta the
 engine's contribution and not a property of the draft position.
 
-Everything is scored under 2026 rules — his league — with both seasons' players
-rescored into them, so the two years are comparable.
+Everything is scored under 2026 rules — his league — with every season's players
+rescored into them, so the years are comparable.
+
+**2023 is in the sample even though ESPN's preseason projections for it are
+gone** (they return 0.0 for every player). It does not need them: the autopick
+opponents consume ESPN's draft RANKS, which survive, and the scorer consumes
+weekly ACTUALS, which survive. Only a board built from ESPN's projection needs
+the projection — so 2023 is usable exactly when we bring our own. It is reported
+separately and does not vote in the four-block gate, which is defined on the two
+seasons that have an ESPN baseline to pair against.
 """
 
 from __future__ import annotations
@@ -71,6 +79,25 @@ def prepare(year: int, tf):
     return s, facts, actuals, weeks
 
 
+def model_projections(year: int, players, scoring):
+    """Our own projection for a past season, or None when the blend is off.
+
+    Built from the three seasons before `year`, so it carries nothing from the
+    season being replayed.
+    """
+    from core.model.priors import priors
+    if float(priors().get("model.projection_blend")) <= 0.0:
+        return None
+    from pathlib import Path
+
+    from core.proj import apply as proj_apply
+    from core.proj import model as proj_model
+    m = proj_model.Model.from_json(Path(str(priors().get("model.projection_model"))))
+    if year in m.trained_on:
+        raise SystemExit(f"model was trained on {year}; benchmarking it there is circular")
+    return proj_apply.project_pool(players, m, scoring, year)
+
+
 def market_ranks(year: int) -> dict[int, int]:
     from core.model import market as mkt
     from core.model.priors import priors
@@ -95,7 +122,9 @@ def run_block(year: int, ranking: str, tf, policy: str) -> list[dict]:
                     missing[:3])
 
     # §2.2b — the consensus blend, from the SAME source the live board uses.
-    board = replay.build_board(s, facts=facts, market_ranks=market_ranks(year))
+    board = replay.build_board(
+        s, facts=facts, market_ranks=market_ranks(year),
+        projections=model_projections(year, s.players, facts.settings.scoring))
 
     control = arena.run(board, facts, ranks, engine_seat=None, teams=TEAMS)
     base = score_league(control.rosters, facts, actuals, weeks, policy)
@@ -129,7 +158,7 @@ def run_block(year: int, ranking: str, tf, policy: str) -> list[dict]:
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--season", type=int, nargs="+", default=[2024, 2025])
+    ap.add_argument("--season", type=int, nargs="+", default=[2023, 2024, 2025])
     ap.add_argument("--ranking", nargs="+", default=list(autopick.RANKINGS))
     ap.add_argument("--policy", default="hindsight",
                     choices=("hindsight", "engine", "naive"))

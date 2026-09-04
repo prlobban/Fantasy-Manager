@@ -1,0 +1,78 @@
+{
+ "params": {
+  "QB": {
+   "season_weights": [
+    1.0,
+    0.3,
+    0.1
+   ],
+   "k_opp": 2.0,
+   "k_eff": 250.0,
+   "base_games": 14.0,
+   "age_slope": 0.0,
+   "age_cliff": 99.0,
+   "mean_opp_pg": 32.249540694469964,
+   "mean_eff": 0.4535839871705938
+  },
+  "RB": {
+   "season_weights": [
+    1.0,
+    0.3,
+    0.1
+   ],
+   "k_opp": 8.0,
+   "k_eff": 60.0,
+   "base_games": 12.0,
+   "age_slope": 0.0,
+   "age_cliff": 99.0,
+   "mean_opp_pg": 10.159437866974685,
+   "mean_eff": 0.7029960282870866
+  },
+  "WR": {
+   "season_weights": [
+    1.0,
+    0.3,
+    0.1
+   ],
+   "k_opp": 16.0,
+   "k_eff": 60.0,
+   "base_games": 15.0,
+   "age_slope": 0.0,
+   "age_cliff": 99.0,
+   "mean_opp_pg": 4.753752043191837,
+   "mean_eff": 1.34197773343683
+  },
+  "TE": {
+   "season_weights": [
+    1.0,
+    0.3,
+    0.1
+   ],
+   "k_opp": 32.0,
+   "k_eff": 120.0,
+   "base_games": 16.0,
+   "age_slope": 0.0,
+   "age_cliff": 99.0,
+   "mean_opp_pg": 3.3034702812337677,
+   "mean_eff": 1.3949002665548587
+  }
+ },
+ "trained_on": [
+  2012,
+  2013,
+  2014,
+  2015,
+  2016,
+  2017,
+  2018,
+  2019,
+  2020,
+  2021,
+  2022,
+  2023
+ ],
+ "held_out": [
+  2024,
+  2025
+ ]
+}

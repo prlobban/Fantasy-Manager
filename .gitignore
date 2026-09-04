@@ -18,6 +18,10 @@
 # All of it is derived and none of it belongs in a public repo.
 data/*
 !data/.gitkeep
+# The fitted projection model: 1.2 KB of constants, no credentials, and the
+# result of a 12-season fit that takes ~20 minutes to reproduce. Committed so
+# the measured outcome is reproducible without a refit.
+!data/proj-model.json
 
 # Anything ESPN hands back verbatim
 *.har
