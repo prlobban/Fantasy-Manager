@@ -236,5 +236,15 @@ def build(
         plan, roster, valuations, settings, opponent_projected
     )
     if current_starters is not None:
-        plan.changes = diff_against_current(plan, current_starters) + plan.changes
+        # The diff already covers any §4.2 swap (the swapped-in player is in
+        # the assignments), so a player must not appear twice: set_lineup would
+        # click MOVE on him a second time and deselect the first move.
+        seen: set[int] = set()
+        merged: list[tuple[Player, str, str, str]] = []
+        for change in diff_against_current(plan, current_starters) + plan.changes:
+            if change[0].espn_id in seen:
+                continue
+            seen.add(change[0].espn_id)
+            merged.append(change)
+        plan.changes = merged
     return plan

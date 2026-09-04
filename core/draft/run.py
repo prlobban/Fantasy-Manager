@@ -102,6 +102,7 @@ def preflight(cfg: DraftConfig) -> tuple[board_mod.Board, RoomModel]:
 
     c = client()
     room = RoomModel(facts=bd.facts, my_team_id=c.my_team_id)
+    _ = room.my_picks  # raises a readable error if we are not in the pick order
     slot = bd.facts.pick_order.index(c.my_team_id) + 1
     log.info(
         "we are team %s (%s), slot %d of %d, picks %s",
@@ -131,7 +132,10 @@ def _assert_pick_order_final(bd) -> None:
     from datetime import timedelta
 
     lock_at = draft_at - timedelta(minutes=ORDER_LOCK_MINUTES)
-    now = datetime.now()
+    # draft_at is timezone-aware (settings._ms_to_dt); compare like with like.
+    now = datetime.now().astimezone()
+    if draft_at.tzinfo is None:
+        now = now.replace(tzinfo=None)
     if now < lock_at:
         raise RuntimeError(
             f"the draft order is randomised at {lock_at:%H:%M} "
@@ -161,21 +165,34 @@ def run(cfg: DraftConfig | None = None) -> DraftStats:
     try:
         if cfg.use_browser:
             session = EspnSession(headless=True).start()
-            url = cfg.draft_url or (
-                f"/football/draft?leagueId={bd.facts.settings.league_id}"
-                f"&seasonId={bd.facts.settings.season}"
+            s_ = bd.facts.settings
+            # Prove the session on the TEAM page first: it is the only page
+            # with owner-only markers. The draft room is then entered under
+            # the weaker "no login block appeared" check, which is all it can
+            # offer. Going straight to the room used to raise NotLoggedIn on a
+            # perfectly good session (2026-09-04 review).
+            session.goto(
+                f"/football/team?leagueId={s_.league_id}&seasonId={s_.season}"
+                f"&teamId={room.my_team_id}"
             )
-            session.goto(url)
+            url = cfg.draft_url or (
+                f"/football/draft?leagueId={s_.league_id}&seasonId={s_.season}"
+            )
+            session.goto(url, require_owner_markers=False)
             qsync = QueueSync(session, by_id=by_id)
-            dom_reader = DomReader(session, by_name=_by_name(bd))
+            dom_reader = DomReader(session, by_name=_by_name(bd), n_teams=room.n_teams)
 
         reader = FallbackReader(ApiReader(by_id=by_id), dom_reader)
 
-        notify("info", "Draft loop started",
+        notify("info", "Draft loop started" + (" (DRY RUN)" if cfg.dry_run else ""),
                f"{bd.facts.settings.name} · our picks {room.my_picks}")
 
         deadline = time.monotonic() + cfg.max_minutes * 60
         last_plan = None
+        #: overall pick number -> (attempts, monotonic time of the last one).
+        #: ESPN's API can lag the click by seconds; without this the loop
+        #: re-clicked the same player every 2s until the pick showed up.
+        attempted: dict[int, tuple[int, float]] = {}
 
         while time.monotonic() < deadline:
             stats.cycles += 1
@@ -196,19 +213,30 @@ def run(cfg: DraftConfig | None = None) -> DraftStats:
                             last_plan.best.player.name if last_plan.best else "?",
                         )
 
-                    # ── the queue write comes FIRST, always (§3.3) ───────────
-                    if qsync and last_plan.candidates:
-                        target = [c.player.espn_id for c in last_plan.top(depth)]
-                        ops, ok = qsync.sync(target, dry_run=cfg.dry_run)
-                        stats.queue_ops += ok
-                        if ops and ok < len(ops):
-                            log.warning("queue sync: only %d/%d ops landed", ok, len(ops))
+                # ── the queue write comes FIRST, always (§3.3) ───────────────
+                # Every cycle, not only after a new pick: when nothing changed
+                # this is one DOM read and zero ops, and when an op failed to
+                # land last time this is what retries it.
+                if qsync and last_plan and last_plan.candidates:
+                    target = [c.player.espn_id for c in last_plan.top(depth)]
+                    ops, ok = qsync.sync(target, dry_run=cfg.dry_run)
+                    stats.queue_ops += ok
+                    if ops and ok < len(ops):
+                        log.warning("queue sync: only %d/%d ops landed", ok, len(ops))
 
                 # ── our turn ─────────────────────────────────────────────────
                 if room.on_the_clock_is_us and last_plan and last_plan.best:
-                    _make_pick(session, cfg, room, last_plan, stats)
-                    # Re-read immediately so we don't double-pick.
-                    room.apply(reader.read())
+                    overall = room.next_overall
+                    n_tries, last_at = attempted.get(overall, (0, 0.0))
+                    if n_tries == 0 or (
+                        n_tries < PICK_MAX_ATTEMPTS
+                        and time.monotonic() - last_at >= PICK_RETRY_SECONDS
+                    ):
+                        attempted[overall] = (n_tries + 1, time.monotonic())
+                        _make_pick(session, cfg, room, last_plan, stats,
+                                   retry=n_tries > 0)
+                        # Re-read immediately so we don't double-pick.
+                        room.apply(reader.read())
 
                 if reader.is_complete() or room.is_complete:
                     log.info("draft complete")
@@ -234,7 +262,15 @@ def run(cfg: DraftConfig | None = None) -> DraftStats:
     return stats
 
 
-def _make_pick(session, cfg: DraftConfig, room: RoomModel, plan, stats: DraftStats) -> None:
+#: One click per pick, one retry if the API still shows the slot empty after
+#: this many seconds. Never more: the queue has our #1 on top and ESPN will
+#: autopick him at the horn, so a third click only risks hitting the wrong row.
+PICK_MAX_ATTEMPTS = 2
+PICK_RETRY_SECONDS = 20.0
+
+
+def _make_pick(session, cfg: DraftConfig, room: RoomModel, plan, stats: DraftStats,
+               *, retry: bool = False) -> None:
     best = plan.best
     runner_up = plan.candidates[1] if len(plan.candidates) > 1 else None
 
@@ -256,9 +292,10 @@ def _make_pick(session, cfg: DraftConfig, room: RoomModel, plan, stats: DraftSta
 
     if not cfg.click:
         # Queue-only mode: ESPN autopicks our #1 when the clock runs out.
-        decisions.record(ActionKind.QUEUE_SYNC, cites=["§3.3", "§3.9"],
-                         reason=f"queue-only mode; expecting autopick of {best.player.name}",
-                         predicted=predicted, alternative=alternative, executed=False)
+        if not retry:
+            decisions.record(ActionKind.QUEUE_SYNC, cites=["§3.3", "§3.9"],
+                             reason=f"queue-only mode; expecting autopick of {best.player.name}",
+                             predicted=predicted, alternative=alternative, executed=False)
         log.info("queue-only: leaving %s at the top for autopick", best.player.name)
         return
 
@@ -282,12 +319,16 @@ def _make_pick(session, cfg: DraftConfig, room: RoomModel, plan, stats: DraftSta
             skip_health=True,  # preflight already ran; 90s clock, one check is enough
             dry_run=cfg.dry_run,
         )
-        if gate.allowed:
+        if gate.allowed and receipt is not None:
             stats.our_picks.append(best.player.name)
-            notify("action", f"Pick {room.next_overall}: {best.player.name}",
+            notify("action", f"Pick {room.next_overall}: {best.player.name}"
+                   + (" (retry)" if retry else ""),
                    f"{best.player.pos.value} · VOR {best.valuation.vor:.1f} · "
                    f"tier {best.valuation.tier}\npassed on: "
                    f"{runner_up.player.name if runner_up else '—'}")
+        elif gate.allowed:
+            # dry-run: gate passed, nothing was clicked
+            log.info("DRY RUN pick %d would be %s", room.next_overall, best.player.name)
     except Exception as e:
         stats.errors.append(f"pick failed: {e}")
         notify("warn", "Click leg failed — falling back to the queue",

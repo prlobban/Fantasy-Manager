@@ -67,8 +67,27 @@ def _need(page, *candidates: str, what: str):
 # ── draft ────────────────────────────────────────────────────────────────────
 
 
+def _need_in_row(page, name: str, *candidates: str, what: str):
+    """A button that sits in a row carrying `name`. Fails closed: a click that
+    cannot be tied to the intended player is not attempted at all."""
+    loc = S.in_row_with(page, name, *candidates)
+    if loc is None:
+        raise ActionFailed(
+            f"could not find {what} in a row containing {name!r}. Either the "
+            "search did not narrow to him or the selectors are stale — see "
+            "core/browser/selectors.py and scripts/discover_selectors.py."
+        )
+    return loc
+
+
 def draft_player(s: EspnSession, espn_id: int, name: str) -> Receipt:
-    """Click Draft on a player. The fast path; the queue is the safety net."""
+    """Click Draft on a player. The fast path; the queue is the safety net.
+
+    The Draft button is located INSIDE the row that carries his name. "Search,
+    then click the first Draft button on the page" would draft whoever ESPN
+    rendered first if the filter lagged — and a wrong click is the one failure
+    the queue cannot undo.
+    """
     page = s.page
     s.dismiss_overlays()
 
@@ -76,7 +95,7 @@ def draft_player(s: EspnSession, espn_id: int, name: str) -> Receipt:
     box.first.fill(name)
     page.wait_for_timeout(500)
 
-    btn = _need(page, S.DRAFT_BUTTON, what="a Draft button")
+    btn = _need_in_row(page, name, S.DRAFT_BUTTON, what="a Draft button")
     btn.first.click()
 
     # ESPN usually asks to confirm. Absence of a dialog is fine.
@@ -96,7 +115,15 @@ def draft_player(s: EspnSession, espn_id: int, name: str) -> Receipt:
 
 def set_lineup(s: EspnSession, league_id: int, team_id: int, season: int,
                moves: list[tuple[int, str]]) -> Receipt:
-    """Apply start/sit moves. `moves` is [(espn_id, target_slot_name)]."""
+    """Apply start/sit moves. `moves` is [(espn_id, target_slot_name)].
+
+    ESPN's editor is two clicks per move: MOVE on the player, then HERE on the
+    destination slot. Clicking MOVE alone (what the first version did) selects
+    him and changes nothing — Save then saves the lineup as it was.
+
+    Moving a bench player into an occupied slot swaps the occupant to the
+    bench, so a plan's "X to RB" is one move even when it displaces someone.
+    """
     page = s.goto(
         f"/football/team?leagueId={league_id}&teamId={team_id}&seasonId={season}"
     )
@@ -107,7 +134,7 @@ def set_lineup(s: EspnSession, league_id: int, team_id: int, season: int,
     page.wait_for_timeout(1200)
 
     applied = 0
-    for espn_id, _slot in moves:
+    for espn_id, slot in moves:
         try:
             row = _row_for_player(page, espn_id)
             if row is None:
@@ -115,9 +142,20 @@ def set_lineup(s: EspnSession, league_id: int, team_id: int, season: int,
                 continue
             mv = row.locator(S.LINEUP_MOVE_BUTTON)
             if mv.count() == 0:
+                log.warning("player %s has no MOVE control (locked slot?)", espn_id)
                 continue
             mv.first.click()
-            page.wait_for_timeout(400)
+            page.wait_for_timeout(500)
+
+            dest = _slot_row_with_here(page, slot)
+            if dest is None:
+                log.warning("no destination slot %r offering HERE for player %s — "
+                            "cancelling that move", slot, espn_id)
+                mv.first.click()  # a second click deselects
+                page.wait_for_timeout(300)
+                continue
+            dest.first.click()
+            page.wait_for_timeout(500)
             applied += 1
         except Exception as e:
             log.warning("lineup move for %s failed: %s", espn_id, e)
@@ -129,6 +167,30 @@ def set_lineup(s: EspnSession, league_id: int, team_id: int, season: int,
     return _receipt(
         s, "set lineup", f"{applied}/{len(moves)} moves applied", verified=applied == len(moves)
     )
+
+
+def _slot_row_with_here(page, slot: str):
+    """The HERE button in the first row labelled with `slot` that offers one.
+
+    Slot names come from ESPN's own slot map ("RB", "RB/WR/TE", "BE"), which
+    is what the roster table prints in its first column.
+    """
+    import re
+
+    label = re.compile(rf"^\s*{re.escape(slot)}\b", re.I)
+    rows = page.locator(S.LINEUP_SLOT_ROW)
+    for i in range(rows.count()):
+        try:
+            r = rows.nth(i)
+            text = (r.inner_text() or "").strip()
+            if not label.search(text):
+                continue
+            here = r.locator(S.LINEUP_HERE_BUTTON)
+            if here.count() > 0:
+                return here
+        except Exception:
+            continue
+    return None
 
 
 def _row_for_player(page, espn_id: int):
@@ -156,7 +218,7 @@ def add_drop(s: EspnSession, league_id: int, season: int,
     box.first.fill(add_name)
     page.wait_for_timeout(800)
 
-    btn = _need(page, S.ADD_PLAYER_BUTTON, what="an Add/Claim button")
+    btn = _need_in_row(page, add_name, S.ADD_PLAYER_BUTTON, what="an Add/Claim button")
     btn.first.click()
     page.wait_for_timeout(1000)
 
@@ -180,11 +242,39 @@ def add_drop(s: EspnSession, league_id: int, season: int,
 # ── trades ───────────────────────────────────────────────────────────────────
 
 
-def accept_trade(s: EspnSession, league_id: int, season: int, offer_id: str) -> Receipt:
+def _trade_button(page, player_names: list[str], *candidates: str, what: str):
+    """The button on the offer card that mentions EVERY player in the offer.
+
+    Two pending offers render two Accept buttons; "click the first" would act
+    on whichever ESPN listed first. With no player names to anchor on, refuse.
+    """
+    import re
+
+    if not player_names:
+        raise ActionFailed(f"cannot locate {what}: no player names supplied to anchor the card")
+    cards = page.locator(S.ANY_ROW)
+    for n in player_names:
+        cards = cards.filter(has_text=re.compile(re.escape(n), re.I))
+    if cards.count() == 0:
+        raise ActionFailed(f"no offer card mentions all of {player_names} — cannot find {what}")
+    for sel in candidates:
+        for group in sel.split(","):
+            group = group.strip()
+            try:
+                loc = cards.locator(group)
+                if loc.count() > 0:
+                    return loc
+            except Exception:
+                continue
+    raise ActionFailed(f"offer card for {player_names} has no {what}")
+
+
+def accept_trade(s: EspnSession, league_id: int, season: int, offer_id: str,
+                 player_names: list[str]) -> Receipt:
     """§6.8 — reached ONLY after a clean gauntlet sweep and the cool-down."""
     page = s.goto(f"/football/tradeoffers?leagueId={league_id}&seasonId={season}")
     s.dismiss_overlays()
-    btn = _need(page, S.TRADE_ACCEPT_BUTTON, what="an Accept button on the trade offers page")
+    btn = _trade_button(page, player_names, S.TRADE_ACCEPT_BUTTON, what="an Accept button")
     btn.first.click()
     confirm = S.first_present(page, S.CONFIRM_BUTTON)
     if confirm is not None:
@@ -193,10 +283,11 @@ def accept_trade(s: EspnSession, league_id: int, season: int, offer_id: str) -> 
     return _receipt(s, "accept trade", f"offer {offer_id}", verified=False)
 
 
-def reject_trade(s: EspnSession, league_id: int, season: int, offer_id: str) -> Receipt:
+def reject_trade(s: EspnSession, league_id: int, season: int, offer_id: str,
+                 player_names: list[str]) -> Receipt:
     page = s.goto(f"/football/tradeoffers?leagueId={league_id}&seasonId={season}")
     s.dismiss_overlays()
-    btn = _need(page, S.TRADE_REJECT_BUTTON, what="a Reject button")
+    btn = _trade_button(page, player_names, S.TRADE_REJECT_BUTTON, what="a Reject button")
     btn.first.click()
     confirm = S.first_present(page, S.CONFIRM_BUTTON)
     if confirm is not None:

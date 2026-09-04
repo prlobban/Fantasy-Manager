@@ -92,9 +92,13 @@ class DomReader:
     and can be re-pointed after an ESPN redesign without touching this logic.
     """
 
-    def __init__(self, session, by_name: dict[str, Player] | None = None):
+    def __init__(self, session, by_name: dict[str, Player] | None = None,
+                 n_teams: int = 0):
         self.s = session
         self.by_name = by_name or {}
+        #: Needed to turn a "R3 P4" row into an overall pick number. Without it
+        #: the encoded negative placeholder would reach the room model as-is.
+        self.n_teams = n_teams
         self._complete = False
 
     def read(self) -> list[Pick]:
@@ -103,7 +107,7 @@ class DomReader:
         page = self.s.page
         rows = page.locator(S.DRAFT_PICK_ROW)
         n = rows.count()
-        picks: list[Pick] = []
+        seen: dict[int, Pick] = {}
         for i in range(n):
             try:
                 text = (rows.nth(i).inner_text() or "").strip()
@@ -113,18 +117,21 @@ class DomReader:
             if not parsed:
                 continue
             overall, name = parsed
+            if overall < 0:
+                if not self.n_teams:
+                    log.warning("pick row %r is in round/pick form and n_teams is "
+                                "unknown — skipping", text[:40])
+                    continue
+                overall = S.decode_round_pick(overall, self.n_teams)
             pl = self.by_name.get(S.norm(name))
-            picks.append(
-                Pick(
-                    overall=overall,
-                    team_id=0,  # the DOM doesn't reliably expose it; room infers
-                    espn_id=pl.espn_id if pl else -1,
-                    pos=pl.pos if pl else None,
-                    name=name,
-                )
-            )
-        picks.sort(key=lambda x: x.overall)
-        return picks
+            seen.setdefault(overall, Pick(
+                overall=overall,
+                team_id=0,  # the DOM doesn't expose it; room.apply infers from the order
+                espn_id=pl.espn_id if pl else -1,
+                pos=pl.pos if pl else None,
+                name=name,
+            ))
+        return [seen[k] for k in sorted(seen)]
 
     def is_complete(self) -> bool:
         from core.browser import selectors as S

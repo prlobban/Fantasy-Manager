@@ -84,6 +84,13 @@ LINEUP_EDIT_BUTTON = "button:has-text('Edit Lineup'), a:has-text('Edit Lineup')"
 LINEUP_SAVE_BUTTON = "button:has-text('Save'), button:has-text('Submit')"
 LINEUP_SLOT_ROW = "table tbody tr, [class*=player-row]"
 LINEUP_MOVE_BUTTON = "button:has-text('MOVE'), button:has-text('Move')"
+#: After MOVE is clicked on a player, every slot he can go to shows this.
+LINEUP_HERE_BUTTON = "button:has-text('HERE'), button:has-text('Here')"
+
+#: Any element that reads as "a row" — used to scope a button to the row that
+#: carries a given player's name, so a click after a search can never land on
+#: the first button of a different player.
+ANY_ROW = "tr, li, [class*=row], [class*=Row], [class*=card], [class*=Card]"
 
 ADD_PLAYER_BUTTON = "button:has-text('Add'), button:has-text('Claim')"
 DROP_PLAYER_BUTTON = "button:has-text('Drop')"
@@ -145,6 +152,36 @@ def norm(name: str) -> str:
         .replace("-", " ")
         .strip()
     )
+
+
+def in_row_with(page, text: str, *button_candidates: str):
+    """The first button candidate that sits inside a row containing `text`.
+
+    Returns a locator or None. This is the guard against the class of bug
+    where "search for X, click the first Draft button" drafts whoever ESPN
+    happened to render first — a wrong click is the one failure the queue
+    safety net cannot undo.
+    """
+    if not text:
+        return None
+    try:
+        rows = page.locator(ANY_ROW).filter(has_text=re.compile(re.escape(text), re.I))
+        if rows.count() == 0:
+            return None
+        for sel in button_candidates:
+            for group in sel.split(","):
+                group = group.strip()
+                if not group:
+                    continue
+                try:
+                    loc = rows.locator(group)
+                    if loc.count() > 0:
+                        return loc
+                except Exception:
+                    continue
+    except Exception:
+        return None
+    return None
 
 
 def first_present(page, *candidates: str, timeout: int = 2000):

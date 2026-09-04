@@ -19,7 +19,7 @@ import logging
 from dataclasses import dataclass, field
 
 from core.model.priors import priors
-from core.model.schema import LeagueSettings, Player, Pos, Valuation
+from core.model.schema import InjuryStatus, LeagueSettings, Player, Pos, Valuation
 
 log = logging.getLogger(__name__)
 
@@ -170,7 +170,7 @@ def choose_drop(
         v = valuations.get(pl.espn_id)
         if v is None or pl.espn_id in protected:
             continue
-        if pl.injury_status.name == "INJURY_RESERVE":
+        if pl.injury_status is InjuryStatus.IR:
             continue  # IR does not occupy a bench spot
 
         # §5.5 — hold an injured player who is coming back soon, but ONLY while

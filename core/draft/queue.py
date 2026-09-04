@@ -42,7 +42,12 @@ def plan_ops(current: list[int], target: list[int]) -> list[QueueOp]:
 
     Strategy:
       1. Remove anything not in the target (drafted players, demoted names).
-      2. Add anything missing.
+      2. Add anything missing. **An add lands at the END of the queue** — that
+         is what ESPN's "add to queue" control does, and the model here has to
+         match the UI or the moves computed from it are wrong. The first
+         version modelled adds as insert-at-index; for current=[A],
+         target=[B, A] it emitted one add and zero moves, and the live queue
+         ended up [A, B] with the wrong player on top. Caught 2026-09-04.
       3. Walk the target left to right; anything already in the right place
          costs nothing, anything else is moved into position.
 
@@ -66,12 +71,12 @@ def plan_ops(current: list[int], target: list[int]) -> list[QueueOp]:
         else:
             ops.append(QueueOp("remove", pid, reason="not in target"))
 
-    # 2 — additions, in target order so indices stay meaningful
+    # 2 — additions. Each one appends; step 3 moves it into place.
     working_set = set(working)
     for idx, pid in enumerate(target):
         if pid not in working_set:
             ops.append(QueueOp("add", pid, index=idx, reason="new to queue"))
-            working.insert(min(idx, len(working)), pid)
+            working.append(pid)
             working_set.add(pid)
 
     # 3 — reorder, forward pass. Entries already correct are skipped for free.
@@ -93,32 +98,49 @@ class QueueSync:
     is worse than a slow one.
     """
 
+    #: Give up re-adding a player after this many attempts that never showed
+    #: up in a re-read. A name the queue renders differently from the board
+    #: would otherwise be re-added every cycle, and on ESPN the add control is
+    #: a toggle — a second click can REMOVE him.
+    MAX_ADD_ATTEMPTS = 2
+
     def __init__(self, session, by_id: dict[int, object] | None = None):
+        from core.browser import selectors as S
+
         self.s = session
         self.by_id = by_id or {}
+        # Longest name first, so "Mike Evans Jr." cannot be claimed by "Mike Evans".
+        self._names: list[tuple[str, int]] = sorted(
+            ((S.norm(getattr(pl, "name", "") or ""), pid) for pid, pl in self.by_id.items()),
+            key=lambda np: -len(np[0]),
+        )
+        self._add_attempts: dict[int, int] = {}
+        self._last_good: list[int] = []
 
     # ── read ─────────────────────────────────────────────────────────────────
 
-    def read_current(self) -> list[int]:
+    def read_current(self) -> list[int] | None:
         """Player ids currently in the queue, in order.
 
-        Returns [] both for "queue is empty" and "couldn't find the queue",
-        which are different. The caller must treat a sudden empty read as
-        suspicious rather than rebuilding blindly — see sync().
+        None means "could not find the queue container" — distinct from an
+        empty queue. sync() skips a None read rather than re-adding everything,
+        because a queue that flickered out of the DOM for one render is not a
+        queue that emptied.
         """
         from core.browser import selectors as S
 
         rows = S.first_present(self.s.page, S.QUEUE_ROW)
         if rows is None:
             log.warning("queue container not found — selectors may be stale")
-            return []
+            return None
         out: list[int] = []
         for i in range(rows.count()):
             try:
                 text = rows.nth(i).inner_text() or ""
             except Exception:
                 continue
-            if pid := self._id_from_text(text):
+            pid = self._id_from_text(text)
+            if pid is not None and pid not in out:
                 out.append(pid)
         return out
 
@@ -126,8 +148,10 @@ class QueueSync:
         from core.browser import selectors as S
 
         norm = S.norm(text)
-        for pid, pl in self.by_id.items():
-            if S.norm(getattr(pl, "name", "")) and S.norm(pl.name) in norm:
+        if not norm:
+            return None
+        for name, pid in self._names:
+            if name and name in norm:
                 return pid
         return None
 
@@ -155,13 +179,23 @@ class QueueSync:
         pl = self.by_id.get(espn_id)
         if pl is None:
             return False
+        attempts = self._add_attempts.get(espn_id, 0)
+        if attempts >= self.MAX_ADD_ATTEMPTS:
+            log.warning("not re-adding %s to the queue: %d attempts never showed up "
+                        "in a re-read (name mismatch?)", getattr(pl, "name", espn_id), attempts)
+            return False
+        self._add_attempts[espn_id] = attempts + 1
+
         page = self.s.page
+        name = getattr(pl, "name", "")
         box = S.first_present(page, S.DRAFT_SEARCH)
         if box is None:
             return False
-        box.first.fill(getattr(pl, "name", ""))
+        box.first.fill(name)
         page.wait_for_timeout(400)
-        btn = S.first_present(page, S.QUEUE_ADD_BUTTON)
+        # The button must be in the row that carries THIS player's name. The
+        # first add-button on the page after a search is not necessarily his.
+        btn = S.in_row_with(page, name, S.QUEUE_ADD_BUTTON)
         if btn is None:
             return False
         btn.first.click()
@@ -183,15 +217,26 @@ class QueueSync:
         """Reorder is drag-and-drop in ESPN's queue, which is the least reliable
         interaction available. Preferred fallback: remove and re-add, which puts
         the player back at a known position."""
+        from core.browser import selectors as S
+
         row = self._queue_row_for(espn_id)
         if row is None:
             return False
         try:
-            target = self.s.page.locator("[class*=queue] [class*=row]").nth(index)
-            row.first.drag_to(target)
+            rows = S.first_present(self.s.page, S.QUEUE_ROW)
+            if rows is None or index >= rows.count():
+                return False
+            row.first.drag_to(rows.nth(index))
             return True
         except Exception:
-            return self._remove(espn_id) and self._add(espn_id)
+            # Remove + re-add puts him at the END, not at `index`. It is only
+            # correct when the target is the last slot; otherwise say so.
+            if self._remove(espn_id) and self._add(espn_id):
+                if index < len(self._last_good) - 1:
+                    log.warning("move fallback for %s landed at the end, wanted %d — "
+                                "the next sync will retry", espn_id, index)
+                return True
+            return False
 
     def _queue_row_for(self, espn_id: int):
         from core.browser import selectors as S
@@ -214,8 +259,23 @@ class QueueSync:
     # ── the thing the draft loop calls ───────────────────────────────────────
 
     def sync(self, target: list[int], *, dry_run: bool = False) -> tuple[list[QueueOp], int]:
-        """Bring the live queue in line with `target`. Returns (ops, succeeded)."""
+        """Bring the live queue in line with `target`. Returns (ops, succeeded).
+
+        Cheap when nothing changed (one DOM read, zero ops), so the loop calls
+        it every cycle rather than only after a new pick — that is what retries
+        an op that failed to land, and what fixes a move fallback that parked
+        someone at the end.
+        """
         current = self.read_current()
+        if current is None:
+            log.warning("queue unreadable this cycle — leaving it as it stands")
+            return [], 0
+        # Anyone the queue now shows has proven his name matches; reset his
+        # add budget so a later legitimate re-add is not refused.
+        for pid in current:
+            self._add_attempts.pop(pid, None)
+        self._last_good = current
+
         ops = plan_ops(current, target)
         if not ops:
             return [], 0

@@ -13,18 +13,31 @@ from core.draft.queue import QueueOp, plan_ops
 
 
 def apply_ops(current: list[int], ops: list[QueueOp]) -> list[int]:
-    """Reference implementation of what the browser is asked to do."""
+    """Reference implementation of what the browser ACTUALLY does.
+
+    An add APPENDS — ESPN's add-to-queue control has no target index. The
+    earlier reference inserted at op.index, which matched a wrong model in
+    plan_ops and let a wrong-top-of-queue bug through the suite.
+    """
     q = list(current)
     for op in ops:
         if op.kind == "remove":
             if op.espn_id in q:
                 q.remove(op.espn_id)
         elif op.kind == "add":
-            q.insert(min(op.index, len(q)), op.espn_id)
+            q.append(op.espn_id)
         else:  # move
             q.remove(op.espn_id)
             q.insert(min(op.index, len(q)), op.espn_id)
     return q
+
+
+def test_new_top_pick_is_moved_above_existing_entries():
+    """The case that slipped through: our new #1 was not in the queue yet.
+    The add appends, so a move MUST follow or position 1 is wrong."""
+    ops = plan_ops([1], [2, 1])
+    assert [o.kind for o in ops] == ["add", "move"]
+    assert apply_ops([1], ops) == [2, 1]
 
 
 def test_empty_to_full_adds_everything():

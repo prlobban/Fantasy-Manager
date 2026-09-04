@@ -39,10 +39,19 @@ class RoomModel:
     # ── ingest ───────────────────────────────────────────────────────────────
 
     def apply(self, picks: list[Pick]) -> list[Pick]:
-        """Record picks we haven't seen. Returns the newly applied ones."""
+        """Record picks we haven't seen. Returns the newly applied ones.
+
+        A pick with `team_id == 0` came from the DOM reader, which cannot see
+        the team; the snake order determines it, so it is inferred here. That
+        inference is what makes the practice draft (DOM-only) produce a usable
+        room model — without it every DOM pick landed on a phantom team 0 and
+        our own roster read as empty.
+        """
         known = {p.overall for p in self.picks}
-        new = [p for p in picks if p.overall not in known]
+        new = [p for p in picks if p.overall > 0 and p.overall not in known]
         for p in sorted(new, key=lambda x: x.overall):
+            if not p.team_id:
+                p.team_id = self.team_on_clock(p.overall)
             self.picks.append(p)
             if p.pos:
                 self._rosters[p.team_id].append(p.pos)
@@ -57,8 +66,13 @@ class RoomModel:
 
     @property
     def next_overall(self) -> int:
-        """The pick number about to happen (1-indexed)."""
-        return self.picks_made + 1
+        """The pick number about to happen (1-indexed).
+
+        Highest seen + 1, not count + 1: picks are strictly sequential, so if
+        the DOM reader misses one row the count would put us a pick behind for
+        the rest of the draft, while the max stays right.
+        """
+        return (self.picks[-1].overall + 1) if self.picks else 1
 
     @property
     def n_teams(self) -> int:
@@ -109,7 +123,7 @@ class RoomModel:
 
     @property
     def is_complete(self) -> bool:
-        return self.picks_made >= self.facts.draftable_spots * self.n_teams
+        return self.next_overall > self.facts.draftable_spots * self.n_teams
 
     # ── rosters ──────────────────────────────────────────────────────────────
 

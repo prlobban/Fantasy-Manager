@@ -17,6 +17,32 @@ One hour before the draft. Everything about our slot changes then — which pick
 we own, how long the gaps are, who we plan around. `run.preflight` **refuses to
 start** before the lock, on purpose. Do not override it.
 
+## Friday — the Practice Draft (selectors)
+
+The draft-room selectors are the one untested surface. ESPN's practice room is
+the only place they can be checked before Saturday.
+
+1. Click **Practice Draft** on the team page; copy the room's URL from the tab.
+2. Probe the selectors against it:
+   ```
+   python scripts/discover_selectors.py --draft --headed --url "<practice url>"
+   ```
+   Anything `NONE MATCHED` gets re-pointed in `core/browser/selectors.py`, then
+   re-run until every group resolves.
+3. Watch the loop read the room, with no writes:
+   ```
+   python scripts/draft.py --dry-run --url "<practice url>"
+   ```
+   Expect `pick N: <name>` lines as the practice room fills, and `queue sync:
+   N ops` (planned, not executed).
+
+Two limits of the practice room, so nothing below reads as a bug:
+- The API does not record practice picks, so the loop reads the **DOM only**,
+  and it attributes each pick to a team by the **real league's** pick order.
+  If the practice room seats us differently, "our turn" will be off. That is
+  fine — the goal is proving the reader and the queue plan, not the pick.
+- `--dry-run` skips the 10:00 order lock and the kill switch on purpose.
+
 ## Timeline
 
 **09:30 — rebuild the board**

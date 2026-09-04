@@ -417,9 +417,12 @@ operating log's watch items. History files accrete and are never edited.
 
 ## §8 — Guardrails
 
-**§8.1 Lanes.** The agent owns: the draft, the lineup, waivers/free agents, and outgoing trade
-proposals. **Pearce owns:** league settings, anything said to another manager in words, accepting
-incoming trades (`§6.6`), and the kill switch.
+**§8.1 Lanes.** The agent owns: the draft, the lineup, waivers/free agents, and — only on a clean
+sweep of the `§6.8` gauntlet — accepting an incoming trade. **Pearce owns:** league settings,
+anything said to another manager in words, sending an outgoing proposal (the agent surfaces the
+idea; the proposal itself is not a write `core` exposes in v1), and the kill switch.
+*(Corrected 2026-09-04: an earlier line here gave incoming accepts to Pearce, contradicting the
+`§8.2` table and the decision made 2026-09-03 — trades are authorised, gated by `§6.8`.)*
 
 **§8.2 The write lane.** Reads are unlimited and unattended. Writes are exactly these — nothing
 else may be written:
@@ -429,7 +432,7 @@ else may be written:
 | Draft queue + draft pick | **auto** (draft day only) |
 | Lineup / start-sit | **auto** — reversible until kickoff |
 | Waiver claim / free-agent add-drop, inside `§5` | **auto** |
-| Outgoing trade proposal, inside `§6.1`–`§6.7` | **auto**, rate-limited |
+| Outgoing trade proposal, inside `§6.1`–`§6.7` | **auto**, rate-limited — *not exposed in v1: `get_trade_ideas` surfaces them, Pearce sends* |
 | Accepting an incoming trade | **auto** — *only* on a clean sweep of the `§6.8` gauntlet, with immediate notification |
 | Countering an incoming trade | 🔴 **NEVER** — a counter is a new outgoing proposal (`§6.8.13`) |
 | League settings · chat/messages · anything outside our own team | 🔴 **NEVER** |

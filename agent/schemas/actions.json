@@ -17,7 +17,7 @@
         "properties": {
           "tool": {
             "type": "string",
-            "enum": ["set_lineup", "add_drop", "reject_trade", "notify"],
+            "enum": ["set_lineup", "add_drop", "reject_trade", "accept_trade", "notify"],
             "description": "Must be one of core's write tools. Nothing else exists."
           },
           "args": {"type": "object"},

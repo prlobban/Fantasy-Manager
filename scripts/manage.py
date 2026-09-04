@@ -44,7 +44,9 @@ def main() -> int:
 
     task = "tuesday" if args.tuesday else "daily"
     st = league_state.snapshot()
-    packet = build_packet(task, st)
+    packet = build_packet(task, st, scope=args.task)
+    if args.task != "all":
+        print(f"scope: {args.task} only")
 
     # core's view first, always. If this looks wrong, the model cannot fix it.
     if lp := packet.get("lineup_plan"):

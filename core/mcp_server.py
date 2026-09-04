@@ -208,21 +208,136 @@ def get_waiver_plan() -> str:
     )
 
 
+def _offers(s: ls_mod.LeagueState):
+    """Pending offers TO us, as (PendingOffer, gauntlet.Offer) pairs.
+
+    A player the snapshot cannot see becomes a stub with no valuation, so the
+    gauntlet's §6.8.11 "complete data" gate fails on him instead of the offer
+    being evaluated with him silently missing.
+    """
+    from core.espn import trades as tr
+    from core.manager import gauntlet as G
+    from core.model.schema import Player, Pos
+
+    by_id = {p.espn_id: p for p in s.all_players()}
+
+    def pl(i: int) -> Player:
+        return by_id.get(i) or Player(espn_id=i, name=f"player {i}", pos=Pos.RB, pro_team="?")
+
+    out = []
+    for po in tr.pending_offers(client(), my_team_id=s.my_team_id, week=s.week):
+        their = s.teams.get(po.from_team)
+        out.append((po, G.Offer(
+            offer_id=po.offer_id, from_team=po.from_team,
+            incoming=[pl(i) for i in po.incoming_ids],
+            outgoing=[pl(i) for i in po.outgoing_ids],
+            proposed_at=po.proposed_at,
+            their_roster=their.roster if their else [],
+        )))
+    return out
+
+
+def _gauntlet(s: ls_mod.LeagueState, offer):
+    """Run §6.8 on a live offer with everything the gates need from state."""
+    from datetime import datetime
+
+    from core.gates import rate_limits
+    from core.manager import gauntlet as G
+    from core.state import store
+
+    v = _vals(s, window="ros")
+    first_seen = datetime.fromisoformat(rate_limits.note_offer_seen(offer.offer_id))
+    accepts = store.load().get("trade_accepts") or []
+    this_week = rate_limits._recent(accepts, 7)
+    from_them = [
+        datetime.fromisoformat(e["at"]) for e in rate_limits._recent(accepts, 365)
+        if e.get("from_team") == offer.from_team
+    ]
+    return G.run(
+        offer, s.me.roster, v, s.facts.settings,
+        first_seen=first_seen,
+        accepts_this_week=len(this_week),
+        last_accept_from_them=max(from_them) if from_them else None,
+        bench_open=s.bench_open,
+        playoff_weeks=tuple(s.facts.settings.playoff_weeks) or (15, 16, 17),
+    )
+
+
+def _offer_json(po, offer, s: ls_mod.LeagueState) -> dict:
+    their = s.teams.get(po.from_team)
+    return {
+        "offer_id": po.offer_id,
+        "from_team": po.from_team,
+        "from_team_name": their.name if their else f"team {po.from_team}",
+        "proposed_at": po.proposed_at.isoformat(),
+        "we_receive": [{"espn_id": p.espn_id, "name": p.name, "pos": p.pos.value}
+                       for p in offer.incoming],
+        "we_give": [{"espn_id": p.espn_id, "name": p.name, "pos": p.pos.value}
+                    for p in offer.outgoing],
+    }
+
+
 @mcp.tool()
 def get_pending_offers() -> str:
-    """Incoming trade offers, each with its full §6.8 gauntlet result.
+    """Incoming trade offers proposed TO us and still open.
 
-    The gauntlet is decided in code. Your job is to narrate it and write the
-    §6.8.3 sentence — you cannot accept anything the gauntlet rejected.
+    Each carries what we would receive and give. Call run_gauntlet(offer_id)
+    for the thirteen-gate result; the gauntlet is decided in code and you
+    cannot accept anything it rejected.
     """
+    s = _snap()
     try:
-        offers = client().league.offers_report()
+        pairs = _offers(s)
     except Exception as e:
         return _ok(error=f"could not read trade offers: {e}", offers=[])
+    return _ok(count=len(pairs), offers=[_offer_json(po, o, s) for po, o in pairs])
+
+
+@mcp.tool()
+def run_gauntlet(offer_id: str) -> str:
+    """The full §6.8 gauntlet on one pending offer, gate by gate.
+
+    Read-only. Narrate the result and write the §6.8.3 sentence; the accept
+    tool re-runs this in code before it does anything.
+    """
+    s = _snap(refresh=True)
+    match = next(((po, o) for po, o in _offers(s) if po.offer_id == offer_id), None)
+    if match is None:
+        return _ok(error=f"no pending offer {offer_id!r}")
+    po, offer = match
+    r = _gauntlet(s, offer)
     return _ok(
-        count=len(offers),
-        offers=[str(o) for o in offers],
-        note="run_gauntlet(offer_id) for the full thirteen-gate result",
+        offer=_offer_json(po, offer, s),
+        accepted=r.accepted,
+        failed_on=r.failed_on,
+        gates=[{"section": c.section, "name": c.name, "passed": c.passed, "detail": c.detail}
+               for c in r.checks],
+    )
+
+
+@mcp.tool()
+def get_trade_ideas() -> str:
+    """Outgoing proposals core would make (§6.1–§6.7): complementary needs,
+    both sides gain, rate limits noted.
+
+    READ ONLY. Proposing on ESPN is not exposed in this version — surface a
+    good one with `notify` and Pearce sends it. Nothing here is a write.
+    """
+    s = _snap()
+    from core.manager import trades_out as T
+
+    v = _vals(s, window="ros")
+    others = {tid: (t.name, t.roster) for tid, t in s.teams.items() if tid != s.my_team_id}
+    props = T.build(s.me.roster, others, v, s.facts.settings)
+    return _ok(
+        count=len(props),
+        proposals=[{
+            "to_team": p.to_team, "to_team_name": p.to_team_name,
+            "give": [x.name for x in p.give], "get": [x.name for x in p.get],
+            "our_gain": p.our_gain, "their_gain": p.their_gain,
+            "fairness": p.fairness, "rationale": p.rationale, "warnings": p.warnings,
+        } for p in props],
+        note="propose_trade is not a tool: post the best idea with notify for Pearce to send",
     )
 
 
@@ -244,8 +359,9 @@ def get_guardrails() -> str:
     """The write table in force right now (§8.2), and the kill switch state."""
     return _ok(
         kill_switch=kill_switch.state(),
-        auto=["set_lineup", "waiver_claim / add_drop", "propose_trade",
-              "accept_trade (only on a clean §6.8 gauntlet)"],
+        auto=["set_lineup", "waiver_claim / add_drop", "reject_trade",
+              "accept_trade (only on a clean §6.8 gauntlet, re-run in code)"],
+        not_exposed=["propose_trade — surface ideas from get_trade_ideas via notify"],
         never=["counter-offer", "league settings", "chat/messages",
                "anything outside our own team"],
         reminder="an action without a § citation is rejected at the schema boundary",
@@ -326,7 +442,12 @@ def add_drop(add_id: int, drop_id: int | None, reason: str, cites: list[str]) ->
 @mcp.tool()
 def reject_trade(offer_id: str, reason: str, cites: list[str]) -> str:
     """Reject an incoming offer. Always allowed — the default answer is no."""
-    s = _snap()
+    s = _snap(refresh=True)
+    match = next(((po, o) for po, o in _offers(s) if po.offer_id == offer_id), None)
+    if match is None:
+        return _ok(allowed=False, reason=f"no pending offer {offer_id!r} — nothing to reject")
+    _, offer = match
+    names = [p.name for p in offer.incoming + offer.outgoing]
     action = Action(kind=ActionKind.REJECT_TRADE, args={"offer_id": offer_id},
                     cites=cites or ["§6.8.0"], reason=reason)
 
@@ -336,11 +457,62 @@ def reject_trade(offer_id: str, reason: str, cites: list[str]) -> str:
 
         with EspnSession(headless=True) as sess:
             return A.reject_trade(
-                sess, s.facts.settings.league_id, s.facts.settings.season, offer_id
+                sess, s.facts.settings.league_id, s.facts.settings.season, offer_id, names
             )
 
     gate, receipt = write_gate.execute(action, perform, skip_health=True)
+    if gate.allowed and receipt:
+        _notify("action", f"Rejected trade from team {offer.from_team}", f"{reason}\n{receipt}")
     return _ok(allowed=gate.allowed, reason=gate.reason,
+               receipt=str(receipt) if receipt else None)
+
+
+@mcp.tool()
+def accept_trade(offer_id: str, reason: str, cites: list[str]) -> str:
+    """Accept an incoming offer. AUTO only on a 13/13 §6.8 gauntlet pass.
+
+    The gauntlet is re-run HERE, in code, on a fresh snapshot — the result you
+    saw from run_gauntlet is not what decides. A single failed gate refuses
+    the write. Acceptance posts the full gauntlet to #fantasy (§6.8.12).
+    """
+    from core.gates import rate_limits
+
+    s = _snap(refresh=True)
+    match = next(((po, o) for po, o in _offers(s) if po.offer_id == offer_id), None)
+    if match is None:
+        return _ok(allowed=False, reason=f"no pending offer {offer_id!r}")
+    po, offer = match
+    result = _gauntlet(s, offer)
+    names = [p.name for p in offer.incoming + offer.outgoing]
+    action = Action(
+        kind=ActionKind.ACCEPT_TRADE,
+        args={"offer_id": offer_id, "from_team": offer.from_team, "gauntlet": result},
+        cites=cites or ["§6.8"], reason=reason,
+    )
+
+    def perform():
+        from core.browser import actions as A
+        from core.browser.session import EspnSession
+
+        with EspnSession(headless=True) as sess:
+            return A.accept_trade(
+                sess, s.facts.settings.league_id, s.facts.settings.season, offer_id, names
+            )
+
+    gate, receipt = write_gate.execute(action, perform, skip_health=True)
+    gates_txt = "\n".join(
+        f"{'✓' if c.passed else '✗'} {c.section} {c.name}: {c.detail}" for c in result.checks
+    )
+    if gate.allowed and receipt:
+        rate_limits.record_accept(offer_id, offer.from_team)
+        _notify("action", f"ACCEPTED trade from team {offer.from_team}",
+                f"{reason}\nget: {', '.join(p.name for p in offer.incoming)}\n"
+                f"give: {', '.join(p.name for p in offer.outgoing)}\n\n{gates_txt}\n{receipt}")
+    elif not gate.allowed:
+        _notify("info", f"Trade from team {offer.from_team} NOT accepted",
+                f"{gate.refused_by}: {gate.reason}\n\n{gates_txt}")
+    return _ok(allowed=gate.allowed, refused_by=gate.refused_by, reason=gate.reason,
+               gauntlet_failed_on=result.failed_on,
                receipt=str(receipt) if receipt else None)
 
 

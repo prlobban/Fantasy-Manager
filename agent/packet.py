@@ -43,7 +43,10 @@ def _player_row(p, v) -> dict[str, Any]:
     }
 
 
-def build(task: str, state: ls_mod.LeagueState | None = None) -> dict[str, Any]:
+def build(task: str, state: ls_mod.LeagueState | None = None,
+          *, scope: str = "all") -> dict[str, Any]:
+    """`scope` narrows a daily run: "lineup" (the Sunday pass) omits the
+    waiver plan and tells the agent to leave waivers and trades alone."""
     st = state or ls_mod.snapshot()
     window = "ros" if task == "predraft" else "week"
     vals = value_pool(
@@ -57,6 +60,7 @@ def build(task: str, state: ls_mod.LeagueState | None = None) -> dict[str, Any]:
     me = st.me
     packet: dict[str, Any] = {
         "task": task,
+        "scope": scope,
         "as_of": st.taken_at.isoformat(),
         "league": {
             "name": st.facts.settings.name,
@@ -145,6 +149,9 @@ def build(task: str, state: ls_mod.LeagueState | None = None) -> dict[str, Any]:
             ],
             "notes": plan.notes,
         }
+
+    if task in ("daily", "tuesday") and scope in ("all", "waivers"):
+        from core.manager import waivers as w
 
         wplan = w.build(
             me.roster, st.free_agents, vals, st.facts.settings,

@@ -163,6 +163,7 @@ class EspnSession:
         wait: str = "domcontentloaded",
         hydrate_for: str | None = None,
         hydrate_timeout: int = 25_000,
+        require_owner_markers: bool | None = None,
     ):
         """Navigate, wait for the SPA to hydrate, then prove we're logged in.
 
@@ -171,13 +172,22 @@ class EspnSession:
         taken at that moment shows blank panels even though the session is
         authenticated. So every navigation waits for real content before any
         assertion or read is allowed to run.
+
+        `require_owner_markers`: whether to demand one of the SIGNED_IN strings.
+        Those are owner-only controls that exist on the TEAM page and nowhere
+        else — demanding them on the draft room or the add-player page fails
+        every time (caught in the 2026-09-04 self-review; it would have killed
+        the draft loop at start-up). Default: required on /football/team,
+        elsewhere the test is "no login block appeared inside the dwell window".
         """
         url = path_or_url if path_or_url.startswith("http") else ESPN_BASE + path_or_url
         log.info("goto %s", url)
         self.page.goto(url, wait_until=wait)
         self.dismiss_overlays()
         self.wait_hydrated(selector=hydrate_for, timeout=hydrate_timeout)
-        self.assert_logged_in()
+        if require_owner_markers is None:
+            require_owner_markers = "/football/team" in url.split("?", 1)[0]
+        self.assert_logged_in(require_positive=require_owner_markers)
         return self.page
 
     def dismiss_overlays(self, *, tries: int = 3) -> bool:
@@ -264,8 +274,12 @@ class EspnSession:
     #: early reads the shell and calls a logged-out page healthy.
     MIN_DWELL_MS = 4_500
 
-    def assert_logged_in(self, *, timeout_ms: int = 12_000) -> None:
+    def assert_logged_in(self, *, timeout_ms: int = 12_000, require_positive: bool = True) -> None:
         """Prove we're a logged-in user, not an anonymous visitor.
+
+        `require_positive=False` (non-team pages): a hard block still raises at
+        any point in the window, but with no SIGNED_IN marker available on that
+        page the pass condition is "the dwell elapsed with no block shown".
 
         🔴 Two traps, both verified 2026-09-03 against the live site:
 
@@ -306,11 +320,20 @@ class EspnSession:
                         "Run scripts/login.py once (§8.5)."
                     )
 
+            dwelled = time.monotonic() - start >= min_dwell
+
             if any(m in body for m in self.SIGNED_IN):
                 positive_seen = True
                 # Only trust it once the page has had time to render a block.
-                if time.monotonic() - start >= min_dwell:
+                if dwelled:
                     return
+
+            if not require_positive and dwelled and len(body) > 400:
+                # No owner markers exist on this page. The block, when it comes,
+                # lands inside the dwell; a rendered page with none is accepted.
+                log.info("no login block after %.1fs on %s — proceeding",
+                         time.monotonic() - start, self.page.url)
+                return
 
             self.page.wait_for_timeout(400)
 

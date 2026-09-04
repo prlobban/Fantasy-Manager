@@ -8,7 +8,7 @@ are ESPN's own id→name mappings, which are protocol, not policy.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 
 from core.espn.client import EspnClient, EspnReadError, client
 from core.model.schema import LeagueSettings, Pos, RosterSlot
@@ -87,7 +87,10 @@ class LeagueFacts:
 
 
 def _ms_to_dt(ms: int | None) -> datetime | None:
-    return datetime.fromtimestamp(ms / 1000) if ms else None
+    """Epoch ms -> timezone-aware local datetime. Aware, so a comparison
+    against `datetime.now().astimezone()` is correct on the box (UTC) and the
+    laptop (Central) alike, and so a printed time carries its zone."""
+    return datetime.fromtimestamp(ms / 1000, tz=UTC).astimezone() if ms else None
 
 
 def load(c: EspnClient | None = None) -> LeagueFacts:
@@ -133,7 +136,7 @@ def load(c: EspnClient | None = None) -> LeagueFacts:
         league_id=c.cfg.league_id,
         season=c.cfg.season,
         name=raw.get("name", ""),
-        team_count=int(raw.get("size") or sched.get("matchupPeriodCount", 0) or len(c.league.teams)),
+        team_count=int(raw.get("size") or len(c.league.teams)),
         draft_type=dtype,
         starting_slots=starting,
         bench_count=counts.get(BENCH_SLOT, 0),

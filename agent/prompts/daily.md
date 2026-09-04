@@ -8,7 +8,13 @@ Run the morning pass over the roster. In order:
    exact moves. Read the `changes` list; that is the proposal.
 4. `get_waiver_plan` — candidates already scored against §5. Note the
    `skipped` list: those are decisions too, and often the right one.
-5. `get_pending_offers` — if any exist, handle them per §6.8.
+5. `get_pending_offers` — for each one, `run_gauntlet(offer_id)` and handle it
+   per §6.8.
+
+**Scope.** The packet carries `scope`. `all` is the normal sweep. `lineup`
+(the Sunday pass) means the lineup ONLY — no waiver moves, no trade actions,
+even if you can see them; say so in `no_action_reason` if the lineup is
+already optimal.
 
 ## What to actually do
 
@@ -27,8 +33,11 @@ drop with only four bench spots, and the drop's value is part of the price.
 
 **Trades (§6.8).** The gauntlet decides; you narrate. Write the §6.8.3 sentence
 in your own words — *why did this manager send this offer?* If you cannot write
-a coherent one, that itself is the answer. Never accept anything the gauntlet
-rejected; you cannot, and trying wastes a turn.
+a coherent one, that itself is the answer. A 13/13 pass → `accept_trade`
+(which re-runs the gauntlet in code before anything happens). Anything else →
+`reject_trade` citing the failed gate. Never accept anything the gauntlet
+rejected; you cannot, and trying wastes a turn. Outgoing ideas come from
+`get_trade_ideas`; there is no propose tool — post a good one with `notify`.
 
 ## News (§2.8)
 

@@ -70,6 +70,22 @@ def build_system_prompt(task: str) -> str:
     return "".join(parts)
 
 
+def _write_mcp_config(path: Path) -> Path:
+    """agent/mcp.json, with the MCP server launched by THIS interpreter.
+
+    The checked-in file says `python`, which on the box is not the venv (and
+    on Windows is the Store alias). Either way the server would fail to start
+    and the model would run with zero tools — no error, just an agent that
+    cannot act. So the command is resolved to sys.executable at run time.
+    """
+    base = json.loads(MCP_CONFIG.read_text(encoding="utf-8"))
+    for server in base.get("mcpServers", {}).values():
+        server["command"] = sys.executable
+        server.setdefault("env", {})["PYTHONPATH"] = str(REPO_ROOT)
+    path.write_text(json.dumps(base, indent=1), encoding="utf-8")
+    return path
+
+
 def _validate(payload: dict, task: str) -> list[str]:
     """Second-pass validation. The CLI already applied the schema; this catches
     the semantic rules a JSON Schema cannot express."""
@@ -81,7 +97,7 @@ def _validate(payload: dict, task: str) -> list[str]:
             return ["missing 'actions'"]
         if not actions and not payload.get("no_action_reason"):
             problems.append("empty actions with no no_action_reason")
-        allowed = {"set_lineup", "add_drop", "reject_trade", "notify"}
+        allowed = {"set_lineup", "add_drop", "reject_trade", "accept_trade", "notify"}
         for i, a in enumerate(actions):
             if a.get("tool") not in allowed:
                 problems.append(f"action {i}: unknown tool {a.get('tool')!r}")
@@ -114,6 +130,7 @@ def run(task: str, packet: dict, *, dry_run: bool = False,
     sys_prompt_path.write_text(build_system_prompt(task), encoding="utf-8")
 
     schema_path = SCHEMAS / TASKS[task][1]
+    mcp_config = _write_mcp_config(run_dir / f"{stamp}-mcp.json")
     user_msg = (
         "Situation packet follows as JSON. Every number you need is in it or "
         "behind a get_* tool. Do not recompute anything.\n\n"
@@ -125,7 +142,7 @@ def run(task: str, packet: dict, *, dry_run: bool = False,
         "--system-prompt-file", str(sys_prompt_path),
         "--output-format", "json",
         "--json-schema", str(schema_path),
-        "--mcp-config", str(MCP_CONFIG),
+        "--mcp-config", str(mcp_config),
         "--strict-mcp-config",
         "--allowedTools", "mcp__fantasy__*",
         "--max-turns", str(cfg.agent_max_turns),
