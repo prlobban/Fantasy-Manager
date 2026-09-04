@@ -57,3 +57,8 @@ espn-session.json
 # scratch
 _s*.py
 _scratch_*.py
+
+# The kill switch is MACHINE-LOCAL state, never code. It was committed as
+# "on" once (2026-09-04) mid-rehearsal; a pull would have silently enabled
+# writes on the box. Each machine owns its own.
+ENABLED
