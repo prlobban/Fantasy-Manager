@@ -201,3 +201,11 @@ def test_a_long_agent_run_is_killed_when_our_turn_arrives(tmp_path, monkeypatch)
 
     assert killed.is_set(), "the watcher never saw our turn"
     assert proc.returncode != 0, "the agent process survived our turn"
+
+
+def test_no_more_picks_means_no_budget():
+    """Observed live 2026-09-04: after our last pick, RoomModel reports a 999
+    sentinel for 'no next turn' and the judge started a full 300s run for a
+    pick that will never come."""
+    assert C.budget_for(tick(picks_until_our_turn=C.NO_MORE_PICKS)) == 0.0
+    assert C.budget_for(tick(picks_until_our_turn=1000)) == 0.0

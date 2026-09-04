@@ -34,6 +34,9 @@ CLOCK_FILE = "clock.json"
 #: killed mid-flight. Skipping is cheaper.
 DEFAULT_PACE_S = 25.0
 
+#: RoomModel's sentinel for "we have no more picks in this draft".
+NO_MORE_PICKS = 999
+
 
 class Pace:
     """Median seconds per pick over a sliding window of room picks."""
@@ -132,6 +135,12 @@ def budget_for(tick: Tick) -> float:
     safety = float(p.get("judge.pace_safety"))
 
     if tick.our_turn or tick.complete or tick.picks_until_our_turn <= 1:
+        return 0.0
+    # RoomModel returns a 999 sentinel for "we have no picks left", which the
+    # gap arithmetic below would read as an enormous runway. Observed live
+    # 2026-09-04: after our last pick the judge started a full-budget run for a
+    # turn that will never come.
+    if tick.picks_until_our_turn >= NO_MORE_PICKS:
         return 0.0
     room_allows = tick.picks_until_our_turn * tick.pace_s * safety
     budget = min(ceiling, room_allows)

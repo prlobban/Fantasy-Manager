@@ -43,6 +43,18 @@ Two things about the practice room, so nothing reads as a bug:
 
 ## Timeline
 
+**Friday 22:00 — the research pass** *(its own rate-limit window, deliberately)*
+```
+python scripts/research.py
+```
+One agent per player over the ADP 1-90 pool, ~6 min at 6 workers, ~$20. Writes
+`data/dossiers/` and `data/overrides.json`. **Run it the night before, not on
+Saturday morning:** it is expensive and variable-length, the judge is cheap and
+time-critical, and an overrun in the same window puts you at the limit at 11:00
+with no recovery. It resumes, so a rate limit costs a wait, not a restart.
+
+Read a few dossiers before bed. They are prose, and a wrong one is obvious.
+
 **09:30 — rebuild the board**
 ```
 python scripts/build_board.py
@@ -64,15 +76,52 @@ python scripts/healthcheck.py
 ```
 Then confirm our slot and pick numbers are what the loop reports.
 
+**10:30 — refresh the top of the board** *(after the order lock)*
+```
+python scripts/research.py --refresh-top 15
+python scripts/build_board.py
+```
+Saturday practice reports are the one thing that genuinely breaks an overnight
+dossier. ~$3, under a minute.
+
 **10:15 — start the loop (on the box)**
 ```
-python scripts/draft.py                # queue + click
-python scripts/draft.py --no-click     # queue only, if you want the safest mode
+python scripts/draft.py                        # queue + click
+python scripts/draft.py --judge shadow         # + the judge, watching only
+python scripts/draft.py --no-click             # queue only, the safest mode
 ```
+
+**Then, in a second terminal, the judge:**
+```
+python scripts/draft_judge.py --shadow
+```
+It reads the loop's clock file and writes verdicts the loop *ignores* in
+shadow. You see every verdict and every "would have changed the pick" in
+#fantasy, on a real draft, with nothing at risk. **Shadow is the recommended
+setting for the first live draft** — the judge has never driven one.
+
+To let it drive: `--judge live` on the loop and drop `--shadow` on the judge.
+Its worst case is bounded by construction — veto and within-tier reorder only,
+so the floor is "we take the maths' #2".
 It passes pre-flight, then waits for ESPN to open the room — the draft URL
 bounces to the home page until then — retrying every 30 s and posting to
 #fantasy when it is in. The queue fills within ~20 s of joining. Have the
 draft room open on the laptop too. Not to drive it — to see it.
+
+## What the judge can and cannot do
+
+Two levers, **enforced in code, not asked for in the prompt**: veto a
+candidate, or reorder two players **within the same tier**. It cannot promote
+across tiers, cannot act on anything not in a dossier, and cannot touch a
+player outside the 15 it was shown. Every lever carries a § citation and the
+dossier line behind it; uncited ones are refused.
+
+It runs as a separate process and **the loop never waits for it.** No verdict,
+a stale verdict, or a verdict whose every lever was refused all end the same
+way: the maths drafts. It is killed the instant you are on the clock.
+
+If it is quiet, that is the expected outcome — it means the dossiers agree with
+the board.
 
 ## What the loop does, in priority order
 
@@ -116,6 +165,9 @@ thinks the queue should be, and fix it by hand in the draft room.
 file, filtered to positions we still need, is a perfectly good cheat sheet.
 `§3.9`: a correctly ordered queue with zero automation is already a competent
 draft.
+
+**The judge is misbehaving.** Kill that process. The loop carries on drafting
+the maths — it does not depend on it. Or restart it with `--shadow`.
 
 **Kill it entirely:** `echo off > ENABLED`. Every write refuses immediately.
 

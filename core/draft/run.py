@@ -349,26 +349,9 @@ def run(cfg: DraftConfig | None = None) -> DraftStats:
                     overall = room.next_overall
 
                     # §3.10 — the judge's only point of contact with a pick.
-                    # A file read: present or absent, fresh or stale, valid or
-                    # refused. There is no waiting and no fallback to a model.
-                    judged_plan, shadow_diff, verdict = last_plan, None, None
-                    if cfg.judge != "off":
-                        verdict = vmod.read(dlog.dir, overall, plan=last_plan)
-                        if verdict is not None:
-                            with_judge = vmod.apply(last_plan, verdict)
-                            before = last_plan.best.player.name if last_plan.best else None
-                            after = with_judge.best.player.name if with_judge.best else None
-                            changed = before != after
-                            if cfg.judge == "live":
-                                judged_plan = with_judge
-                            elif changed:
-                                shadow_diff = (f"would have taken {after} over "
-                                               f"{before} ({verdict.describe()})")
-                            dlog.judge(verdict, overall=overall, mode=cfg.judge,
-                                       changed=changed, before=before, after=after)
-                            if shadow_diff:
-                                notify("info", f"👁 Shadow · pick {overall}", shadow_diff)
-                    last_plan = judged_plan
+                    last_plan, verdict, shadow_diff = consult_judge(
+                        last_plan, mode=cfg.judge, draft_dir=dlog.dir,
+                        overall=overall, dlog=dlog)
 
                     n_tries, last_at = attempted.get(overall, (0, 0.0))
                     if last_plan.best and (n_tries == 0 or (
@@ -771,3 +754,46 @@ def _pick_post(plan, chosen, *, overall: int, how: str, room,
         lines.append(f"Shadow            {shadow_diff}")
 
     return title, "\n".join(lines)
+
+
+def consult_judge(plan, *, mode: str, draft_dir, overall: int, dlog=None):
+    """§3.10 — read the judge's verdict for this pick and decide what to do.
+
+    Returns (plan_to_draft_from, verdict_or_None, shadow_diff_or_None).
+
+    This is a FILE READ and nothing else. It cannot block, cannot call a model,
+    and cannot fail into waiting: a verdict is present or it is not, fresh or
+    stale, valid or refused, and every one of those outcomes ends with a plan
+    to draft from. That is what keeps §8.7 and §10.2 true in the one place a
+    model's opinion touches a live pick.
+
+    - "off"    — the verdict is not even read.
+    - "shadow" — it is read, validated, logged and posted, and then discarded.
+                 The maths drafts. This is how a judge earns its way to live.
+    - "live"   — its levers apply, within the limits core.draft.verdict enforces.
+    """
+    if mode == "off" or plan is None:
+        return plan, None, None
+
+    verdict = vmod.read(draft_dir, overall, plan=plan)
+    if verdict is None:
+        return plan, None, None
+
+    with_judge = vmod.apply(plan, verdict)
+    before = plan.best.player.name if plan.best else None
+    after = with_judge.best.player.name if with_judge.best else None
+    changed = before != after
+
+    shadow_diff = None
+    out = plan
+    if mode == "live":
+        out = with_judge
+    elif changed:
+        shadow_diff = f"would have taken {after} over {before} ({verdict.describe()})"
+
+    if dlog is not None:
+        dlog.judge(verdict, overall=overall, mode=mode, changed=changed,
+                   before=before, after=after)
+    if shadow_diff:
+        notify("info", f"👁 Shadow · pick {overall}", shadow_diff)
+    return out, verdict, shadow_diff

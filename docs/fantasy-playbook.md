@@ -163,6 +163,16 @@ fails, stop and escalate rather than proceeding on rules that don't apply.
 consistency, ADP, positional survival curves, and a one-line written rationale per player in the
 top ~200. On the clock the agent re-sorts a table it already has. It does not think.
 
+The pre-draft research is the **dossier pass**: one bounded, sourced record per
+player in the reachable pool, produced by per-player research agents with web
+access and validated in code before any of it may touch the board. A dossier is
+**facts about a player, never a pick recommendation** — the moment it contains
+advice it is stale as soon as the board moves. Sources must be real URLs; a veto
+needs high confidence and two independent outlets; a multiplier past ±0.05 needs
+two; and the record must agree with itself. One exception to "all research
+before 11:00": an undossiered player in our top three may earn a single
+time-boxed lookup when the budget allows (`§3.10`).
+
 **§3.3 The queue is the artifact.** ESPN autopicks from the top of your **live Player Queue** before
 falling back to its own list. So:
 
@@ -214,6 +224,29 @@ needs. Two adjustments:
 **§3.8 Log every pick as it happens** — player taken, the runner-up we passed on, the reason, and
 the board state. That log is what `§7` grades. Without it the Tuesday review has nothing to learn
 from.
+
+**§3.10 Judgment between picks — two levers, both capped in code.**
+
+The research pass (§3.2) writes one sourced dossier per player in the reachable
+pool. Between our turns an agent may review `core`'s ranking against those
+dossiers and hold **exactly two levers: veto a candidate, or reorder within a
+tier.** It may not promote across tiers, may not act on any fact that is not in
+a dossier, and may not touch a candidate outside the list it was shown.
+
+- It runs as a **separate process**. The loop writes a clock file; the judge
+  writes a verdict file; the loop reads it on our turn if it is there. The loop
+  never waits (`§8.7`, `§10.2`), and every outcome — no verdict, stale verdict,
+  every lever refused — ends with a pick.
+- Its budget is `min(max_budget_s, picks_until_next × observed pace ×
+  pace_safety)`, skipped below `min_budget_s`. **Measured pace, not the nominal
+  clock:** seven picks at 90s is ten minutes, but seven picks at 20s is two and
+  a half.
+- It is **killed the moment we are on the clock.** A killed run writes nothing.
+- Every lever needs a § citation and a `dossier_fact`. An uncited lever is
+  refused exactly as an uncited action is (`§8.2a`).
+
+**A judge earns `live` by running in `shadow` first** — producing and posting
+real verdicts against a real draft while the maths still picks.
 
 **§3.9 If anything is broken at 10:59, the queue still ships.** A correctly ordered queue with zero
 automation is already a competent draft. Get that in place first; the click leg is the upgrade.
