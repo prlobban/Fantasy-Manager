@@ -17,6 +17,20 @@ One hour before the draft. Everything about our slot changes then — which pick
 we own, how long the gaps are, who we plan around. `run.preflight` **refuses to
 start** before the lock, on purpose. Do not override it.
 
+## Rehearsing the judge (the practice room cannot)
+
+ESPN's practice room picks instantly, so the observed pace floors at 3s, the
+budget correctly computes to zero, and the judge never runs. To exercise it at
+real pace, replay a finished draft:
+
+```
+python scripts/rehearse_judge.py --turns 3 --pace 45
+```
+
+Runs the real judge process against a replayed room. ~$0.50 and ~20s a turn.
+Measured 2026-09-04: 3/3 verdicts, **median 18s against a 158s budget** — nine
+times the headroom it needs.
+
 ## The rehearsal — a League-Specific Practice Draft
 
 The selectors were verified against live practice rooms on 2026-09-04 and the
@@ -96,7 +110,8 @@ python scripts/draft.py --no-click             # queue only, the safest mode
 python scripts/draft_judge.py --shadow
 ```
 It reads the loop's clock file and writes verdicts the loop *ignores* in
-shadow. You see every verdict and every "would have changed the pick" in
+shadow. **The mode that decides anything is the loop's `--judge` flag**, not
+this one; `--shadow` here only labels its Slack posts. You see every verdict and every "would have changed the pick" in
 #fantasy, on a real draft, with nothing at risk. **Shadow is the recommended
 setting for the first live draft** — the judge has never driven one.
 
