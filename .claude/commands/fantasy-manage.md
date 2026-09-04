@@ -5,6 +5,10 @@ description: 'Season manager runbook — run a sweep by hand, read the log, flip
 The in-season loop. Normally runs itself on the box at 07:30 CT; this is how to
 drive it by hand or work out what it did.
 
+> ⚠️ **A bare `python` does not work.** On Windows the Microsoft Store alias
+> intercepts it. Everywhere below, `python` means `.\.venv\Scripts\python.exe`
+> on the laptop and `./.venv/bin/python` on the box. See `RUNNING.md`.
+
 ## Run a sweep
 
 ```

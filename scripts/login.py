@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""ONE-TIME: log into ESPN by hand and save the web session.
+r"""ONE-TIME: log into ESPN by hand and save the web session.
 
 Why this exists
 ---------------
@@ -15,8 +15,14 @@ after that reuses it.
 
 Usage
 -----
-    python scripts/login.py               # opens a real browser window
-    python scripts/login.py --verify      # headless check that the saved session works
+A bare `python` does not work on Windows — the Store alias intercepts it. Call
+the venv's interpreter directly, and run these ONE AT A TIME: the first opens a
+browser and then waits for you.
+
+    .\.venv\Scripts\python.exe scripts\login.py            # Windows
+    ./.venv/bin/python scripts/login.py                    # Linux / the box
+
+    .\.venv\Scripts\python.exe scripts\login.py --verify   # headless re-check
 
 The saved file is gitignored. It is a live credential — treat it like a password.
 
@@ -63,10 +69,12 @@ def do_login() -> int:
             return 1
 
         path = s.save_session()
-        print(f"\n✓ Session saved to {path}")
-        print("  Verify it with:  python scripts/login.py --verify")
-        print("  Then copy it to the box:")
-        print(f"    scp {path} ironman@192.168.4.43:~/Fantasy-Manager/data/")
+        print(f"\n[ok] Session saved to {path}")
+        print("\nNext, one at a time:")
+        print(r"  .\.venv\Scripts\python.exe scripts\login.py --verify")
+        print(r"  scp data\espn-session.json "
+              "ironman@192.168.4.43:~/Fantasy-Manager/data/")
+        print("\nThis file is a live credential — treat it like a password.")
         return 0
     finally:
         s.close()

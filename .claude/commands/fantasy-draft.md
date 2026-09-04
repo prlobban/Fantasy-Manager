@@ -7,6 +7,10 @@ learn it.**
 
 Draft: **Saturday 2026-09-05, 11:00 CT.** 90 seconds per pick.
 
+> ⚠️ **A bare `python` does not work.** On Windows the Microsoft Store alias
+> intercepts it. Everywhere below, `python` means `.\.venv\Scripts\python.exe`
+> on the laptop and `./.venv/bin/python` on the box. See `RUNNING.md`.
+
 ## 🔴 The order is randomised at 10:00
 
 One hour before the draft. Everything about our slot changes then — which picks
