@@ -53,3 +53,7 @@ Thumbs.db
 
 # Saved ESPN web session — a live credential
 espn-session.json
+
+# scratch
+_s*.py
+_scratch_*.py

@@ -229,7 +229,7 @@ def test_roster_is_always_legal():
 def test_we_always_fill_every_starting_slot():
     """A roster that can't field a legal lineup is a failed draft, whatever the
     projections say."""
-    facts = make_facts()
+
     for seed in range(8):
         _, roster, _ = simulate(seed)
         counts: dict[Pos, int] = {}
@@ -245,7 +245,7 @@ def test_no_kicker_or_dst_before_the_last_two_rounds():
     facts = make_facts()
     rounds = facts.draftable_spots
     for seed in range(6):
-        rng_room = RoomModel(facts=facts, my_team_id=facts.pick_order[3])
+
         _, roster, _ = simulate(seed)
         # roster is in pick order, so index gives the round
         for i, p in enumerate(roster):
