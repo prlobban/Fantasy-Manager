@@ -232,7 +232,15 @@ def injury_history_by_gsis(
         # Most frequently reported injury that season is the primary one.
         desc = ""
         if v["descs"]:
-            desc = max(set(v["descs"]), key=v["descs"].count)
+            # Ties broken alphabetically, NOT by set iteration order. `set()` of
+            # strings iterates in an order that depends on PYTHONHASHSEED, so
+            # this line returned a different primary injury from run to run
+            # whenever two descriptions tied — which flips soft-tissue vs clean
+            # -acute classification, which changes the durability discount, which
+            # changes the board. Measured 2026-09-04: the same benchmark scored
+            # 6.45 and 7.00 mean finish in two identical processes.
+            descs = v["descs"]
+            desc = max(sorted(set(descs)), key=descs.count)
         out[gsis].append(
             InjuryEvent(season=season, games_missed=int(v["missed"]), description=desc)
         )

@@ -22,6 +22,16 @@ model:
   # fraction. Bounds the one place a model touches the board (§3.2, predraft).
   override_cap: 0.15
 
+  # §2.2b — how much of ESPN's published consensus draft board to mix into our
+  # own projection. 0.0 is our model alone, 1.0 is consensus alone. Measured on
+  # the autopick benchmark (docs/draft-optimization-plan.md): mean finish went
+  # 6.80 -> 3.65 of 10 and 13/40 -> 28/40 against ESPN autodraft, improving all
+  # four blocks. Flat between 0.5 and 0.9, so this is a plateau not a spike.
+  market_blend: 0.75
+  # PPR, because this league scores 0.5 a reception — and it measured better
+  # than STANDARD (3.65 vs 4.22).
+  market_rank_type: PPR
+
 draft:
   # §3.3 — how many players to keep in the live ESPN queue at all times.
   queue_depth: 8
@@ -49,6 +59,12 @@ draft:
   # real bye weeks.
   bye_collision_weight: 0.02
 
+  # §3.4 — how much of the positional replacement baseline VOR removes stays
+  # removed. points = vor + replacement, so 1.0 is a pure-VOR board and 0.0 is
+  # a raw-projection board, with everything in between available. Swept by
+  # scripts/optimize.py against the autopick benchmark.
+  vor_weight: 1.0
+
   # §3.7 — how much a player's VOR counts AGAIN toward filling an empty
   # starting slot. Never scaled by raw points: that reintroduces the
   # cross-position bias VOR exists to remove (2026-09-04).
@@ -60,7 +76,16 @@ draft:
 
   # §3.7 — season points forgone by spending a pick on bench depth while a
   # starting slot is still empty.
-  bench_opportunity_cost: 25.0
+  #
+  # Set to 0 on 2026-09-04: it is the ONE parameter that improved all four
+  # benchmark blocks, and it did so against two different baselines (before and
+  # after the §2.2b consensus blend), which is why it survived the anti-overfit
+  # gate when nothing else did. Mechanism: it is an ABSOLUTE points charge on a
+  # score that is VOR-scaled, so in the late rounds — where every VOR is within
+  # +/-20 — a 25-point charge dominates the pick entirely. Position limits
+  # already stop the stacking this was written to prevent, so it was doing that
+  # job twice and the second time badly.
+  bench_opportunity_cost: 0.0
 
   # Board is stale if older than this (hours) at draft time.
   board_max_age_hours: 3

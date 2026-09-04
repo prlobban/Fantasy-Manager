@@ -71,6 +71,13 @@ def prepare(year: int, tf):
     return s, facts, actuals, weeks
 
 
+def market_ranks(year: int) -> dict[int, int]:
+    from core.model import market as mkt
+    from core.model.priors import priors
+    raw = json.loads((history.cache_dir(year) / "pool.json").read_text(encoding="utf-8"))
+    return mkt.ranks_from_raw(raw, str(priors().get("model.market_rank_type")))
+
+
 def score_league(rosters: dict[int, list], facts, actuals, weeks, policy: str):
     res = score.score_league(rosters, facts.settings, season=0, policy=policy,
                              weeks=weeks, actuals=actuals)
@@ -87,7 +94,8 @@ def run_block(year: int, ranking: str, tf, policy: str) -> list[dict]:
         log.warning("%d players have no %s rank, e.g. %s", len(missing), ranking,
                     missing[:3])
 
-    board = replay.build_board(s, facts=facts)
+    # §2.2b — the consensus blend, from the SAME source the live board uses.
+    board = replay.build_board(s, facts=facts, market_ranks=market_ranks(year))
 
     control = arena.run(board, facts, ranks, engine_seat=None, teams=TEAMS)
     base = score_league(control.rosters, facts, actuals, weeks, policy)

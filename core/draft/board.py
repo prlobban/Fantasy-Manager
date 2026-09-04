@@ -25,6 +25,7 @@ from core.espn import players as espn_players
 from core.espn import settings as espn_settings
 from core.espn.client import client
 from core.espn.settings import LeagueFacts
+from core.model import market
 from core.model.priors import priors
 from core.model.schema import Player, Valuation
 from core.model.value import PlayerContext, value_pool
@@ -73,8 +74,17 @@ def build(
     c = client()
     facts = espn_settings.load(c)
 
-    pool = espn_players.load_pool(c, size=size)
+    raw_entries: list = []
+    pool = espn_players.load_pool(c, size=size, keep_raw=raw_entries)
     byes = espn_players.attach_byes(pool, c)
+
+    # §2.2b — mix ESPN's consensus draft board into the projection BEFORE
+    # valuation, so VOR, tiers and every consumer downstream see one number.
+    n_blend = market.blend(
+        pool,
+        market.ranks_from_raw(raw_entries, str(priors().get("model.market_rank_type"))),
+        float(priors().get("model.market_blend")),
+    )
 
     # ── injury history, joined on ESPN id with a name fallback ───────────────
     contexts: dict[int, PlayerContext] = {}
@@ -107,6 +117,7 @@ def build(
         "with_bye": float(byes),
         "injury_history_matched": float(matched),
         "news_overrides": float(n_overrides),
+        "market_blended": float(n_blend),
     }
     log.info("board built: %s", coverage)
 

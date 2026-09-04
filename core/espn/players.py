@@ -112,8 +112,13 @@ def load_pool(
     *,
     size: int = 450,
     page: int = 150,
+    keep_raw: list | None = None,
 ) -> list[Player]:
     """The top `size` players by ownership, with projections.
+
+    `keep_raw`, if given, is extended with the raw entries so a caller can read
+    fields the Player model does not carry — currently `draftRanksByRankType`,
+    which §2.2b blends into the projection.
 
     Ownership order is the right sort: it is ESPN's own view of who matters, and
     it keeps every rostered player and every plausible waiver target in the pool
@@ -137,6 +142,8 @@ def load_pool(
         batch = data.get("players") or []
         if not batch:
             break
+        if keep_raw is not None:
+            keep_raw.extend(batch)
         for entry in batch:
             pl = _to_player(entry, c.cfg.season)
             if pl and pl.espn_id not in seen:

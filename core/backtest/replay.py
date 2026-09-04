@@ -38,6 +38,7 @@ from core.draft import picker
 from core.draft.board import Board
 from core.draft.room import Pick, RoomModel
 from core.espn.settings import LeagueFacts
+from core.model import market
 from core.model.priors import priors
 from core.model.schema import Player, Pos
 from core.model.value import PlayerContext, value_pool
@@ -53,7 +54,8 @@ class LeakageError(AssertionError):
 
 
 def build_board(season: Season, *, facts: LeagueFacts | None = None,
-                injury_history: bool = True) -> Board:
+                injury_history: bool = True,
+                market_ranks: dict[int, int] | None = None) -> Board:
     """A board for `season`, built the way the live board is built.
 
     Deliberately reuses `value_pool` — the same function the real draft runs on
@@ -62,6 +64,12 @@ def build_board(season: Season, *, facts: LeagueFacts | None = None,
     """
     facts = facts or season.facts
     yrs = tuple(range(season.year - HISTORY_SEASONS, season.year))
+
+    # §2.2b — the same consensus blend the live board applies. Passed in rather
+    # than read from disk so the benchmark can sweep the weight.
+    if market_ranks:
+        market.blend(season.players, market_ranks,
+                     float(priors().get("model.market_blend")))
 
     contexts: dict[int, PlayerContext] = {}
     matched = 0

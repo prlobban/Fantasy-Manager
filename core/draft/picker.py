@@ -132,6 +132,12 @@ def rank(
     w_run_join = float(p.get("draft.run_join_weight"))
     w_run_wait = float(p.get("draft.run_wait_weight"))
     bye_weight = float(p.get("draft.bye_collision_weight"))
+    # §3.4 — how much of the positional replacement baseline to add back.
+    # points = vor + replacement, so this interpolates the whole way between a
+    # pure-VOR board (1.0) and a raw-projection board (0.0) without inventing a
+    # second scale. Added 2026-09-04: the autopick benchmark measured a seat
+    # drafting raw projections at -7 against ESPN and the VOR engine at -58.
+    vor_weight = float(p.get("draft.vor_weight"))
     hole_weight = float(p.get("draft.hole_weight"))
     stack_penalty = float(p.get("draft.stack_penalty"))
     bench_cost = float(p.get("draft.bench_opportunity_cost"))
@@ -166,12 +172,16 @@ def rank(
     out: list[Candidate] = []
     for player, val in avail:
         o = outlooks[player.pos]
-        reasons: dict[str, float] = {"base": val.vor}
-        score = val.vor
+        # `base` replaces raw VOR as the quantity every proportional bonus below
+        # scales off, so the whole score moves on one scale. At vor_weight 1.0 it
+        # IS val.vor and nothing changes.
+        base = val.vor + (1.0 - vor_weight) * (val.points - val.vor)
+        reasons: dict[str, float] = {"base": base}
+        score = base
         notes: list[str] = []
 
         # §3.5 — waiting at this position is expensive.
-        scarcity = w_scarcity * val.vor * (o.cost / max_cost) if max_cost > 0 else 0.0
+        scarcity = w_scarcity * base * (o.cost / max_cost) if max_cost > 0 else 0.0
         if scarcity:
             score += scarcity
             reasons["scarcity"] = scarcity
@@ -179,26 +189,26 @@ def rank(
         # §3.4 — the tier is about to break. Only the top remaining tier counts;
         # a thin tier five deep in the position is not urgent.
         if val.tier == o.top_tier and o.top_tier_remaining <= 2:
-            bump = w_tier * val.vor * (3 - o.top_tier_remaining)
+            bump = w_tier * base * (3 - o.top_tier_remaining)
             score += bump
             reasons["tier_break"] = bump
             notes.append(f"last {o.top_tier_remaining} in tier {val.tier}")
 
         # §3.6 — teams ahead of us need this position.
         if d := demand.get(player.pos, 0):
-            bump = min(w_demand_cap, w_demand * d) * val.vor
+            bump = min(w_demand_cap, w_demand * d) * base
             score += bump
             reasons["room_demand"] = bump
 
         # §3.6 — a run is on. Get in front of it, or take what's being skipped.
         if run is not None:
             if player.pos is run:
-                bump = w_run_join * val.vor
+                bump = w_run_join * base
                 score += bump
                 reasons["run_join"] = bump
             elif o.cost < 0.25 * max_cost:
                 # Everyone's ignoring this position; the value is still here later.
-                bump = -w_run_wait * val.vor
+                bump = -w_run_wait * base
                 score += bump
                 reasons["run_wait"] = bump
 
@@ -238,8 +248,8 @@ def rank(
             # rehearsal (2026-09-04) took a second QB at -9 VOR in round 7 with
             # a starting WR slot still empty, because the floor at zero had
             # turned -9 into 0.
-            effective = surplus_mult * val.vor if val.vor > 0 else val.vor
-            delta = effective - val.vor
+            effective = surplus_mult * base if base > 0 else base
+            delta = effective - base
             score += delta
             reasons["surplus"] = delta
             if surplus_mult <= 0.25:
@@ -289,7 +299,7 @@ def rank(
         # the middle rounds, which left the engine indifferent between a wide
         # receiver and a third tight end while it had no wide receivers at all.
         if _starting_hole(room, player.pos, my_pos) > 0 and hole_pressure > 0:
-            bump = hole_weight * max(val.vor, 0.0) * hole_pressure
+            bump = hole_weight * max(base, 0.0) * hole_pressure
             score += bump
             reasons["fills_hole"] = bump
 
@@ -308,7 +318,7 @@ def rank(
         if player.bye_week and player.bye_week in my_byes.get(player.pos, set()):
             starters = room.facts.settings.starters_at(player.pos)
             if my_pos.get(player.pos, 0) < starters:
-                pen = -bye_weight * max(val.vor, 0.0)
+                pen = -bye_weight * max(base, 0.0)
                 score += pen
                 reasons["bye_collision"] = pen
                 notes.append(f"bye {player.bye_week} collision")
@@ -317,8 +327,9 @@ def rank(
         # With a shallow bench a pure lottery ticket competes with bye cover.
         if rounds_left <= 3 and bench_spots <= 4:
             if val.availability < 0.8:
-                score -= 0.05 * val.vor
-                reasons["shallow_bench_risk"] = -0.05 * val.vor
+                pen = -0.05 * max(base, 0.0)
+                score += pen
+                reasons["shallow_bench_risk"] = pen
 
         out.append(
             Candidate(
