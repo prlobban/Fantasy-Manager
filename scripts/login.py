@@ -53,19 +53,16 @@ def do_login() -> int:
     s = EspnSession(headless=False, use_saved_session=False)
     s.start()
     try:
-        s.page.goto(f"{ESPN_BASE}/football/team?leagueId={cfg.league_id}", wait_until="domcontentloaded")
+        s.page.goto(ESPN_BASE + team_url(cfg), wait_until="domcontentloaded")
         input("Press ENTER once you are logged in and can see your team... ")
 
-        s.page.goto(
-            f"{ESPN_BASE}/football/team?leagueId={cfg.league_id}&seasonId={cfg.season}",
-            wait_until="domcontentloaded",
-        )
+        s.page.goto(ESPN_BASE + team_url(cfg), wait_until="domcontentloaded")
         s.page.wait_for_timeout(4000)
         s.dismiss_overlays()
 
         body = (s.page.inner_text("body") or "").lower()
         if "log in required" in body or "enter your email" in body:
-            print("\n✗ Still logged out. Nothing saved. Try again.")
+            print("\n[x] Still logged out. Nothing saved. Try again.")
             return 1
 
         path = s.save_session()
@@ -80,25 +77,45 @@ def do_login() -> int:
         s.close()
 
 
+def team_url(cfg) -> str:
+    """The team page REQUIRES teamId.
+
+    Without it ESPN renders "Invalid Team ID" — a page that is fully
+    authenticated (your team name is in the header, the whole nav is live) but
+    contains no roster. That reads exactly like a dead session and is not one.
+    Cost us a false alarm on 2026-09-04.
+    """
+    from core.espn.client import client
+
+    url = f"/football/team?leagueId={cfg.league_id}&seasonId={cfg.season}"
+    try:
+        return f"{url}&teamId={client().my_team_id}"
+    except Exception:
+        return url
+
+
 def do_verify() -> int:
     cfg = settings()
     s = EspnSession(headless=True)
     if not s.has_saved_session():
-        print(f"✗ No saved session at {s.storage_state_path}. Run without --verify first.")
+        print(f"[x] No saved session at {s.storage_state_path}. Run without --verify first.")
         return 1
     s.start()
     try:
-        s.goto(f"/football/team?leagueId={cfg.league_id}&seasonId={cfg.season}")
+        s.goto(team_url(cfg))
         s.page.wait_for_timeout(2500)
         body = (s.page.inner_text("body") or "").lower()
         shot = s.screenshot("verify-session")
         if "log in required" in body:
-            print(f"✗ Session is dead — ESPN still says 'Log in Required'. See {shot}")
+            print(f"[x] Session is dead — ESPN still says 'Log in Required'. See {shot}")
             return 1
-        print(f"✓ Headless session works. Screenshot: {shot}")
+        if "invalid team id" in body or "invalid league" in body:
+            print(f"[x] Wrong URL, not a bad session — ESPN says invalid id. See {shot}")
+            return 1
+        print(f"[ok] Headless session works. Screenshot: {shot}")
         return 0
     except NotLoggedIn as e:
-        print(f"✗ {e}")
+        print(f"[x] {e}")
         return 1
     finally:
         s.close()

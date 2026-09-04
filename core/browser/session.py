@@ -241,15 +241,22 @@ class EspnSession:
         "enter your email to continue",
     )
     #: Page text that only ever renders for a signed-in manager.
+    #:
     #: ⚠️ NOTHING from the nav belongs here. "Transaction Counter", "Waiver
     #: Order" and friends are League-menu links that render to logged-out
     #: visitors too — one of them was in this list on 2026-09-03 and made the
     #: check pass on a "Log in Required" page.
+    #:
+    #: These are taken from a real authenticated team page (verified 2026-09-04,
+    #: screenshot in data/screenshots). They are owner-only controls: a visitor
+    #: is never offered the chance to leave the league or edit its settings.
     SIGNED_IN = (
+        "leave league",
+        "team settings",
+        "set lineup",
+        "edit draft strategy",
         "edit lineup",
-        "move players",
-        "opponent's roster",
-        "proj pts",
+        "add 2nd manager",
     )
 
     #: Minimum time to keep looking before ACCEPTING a positive signal.
