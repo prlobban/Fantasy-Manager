@@ -99,3 +99,12 @@ def test_ir_player_is_not_a_drop_candidate():
     drop, _cost, _why = waivers.choose_drop(roster, vals, settings)
     assert drop is not None
     assert drop.espn_id != 2, "an IR player does not occupy a bench spot and is never the drop"
+
+
+def test_pick_train_parses_the_live_room_text():
+    from core.browser.selectors import parse_pick_train
+
+    text = ("RND 1 OF 13 00:30 ON THE CLOCK: PICK 4 big P PICK 5 AUTO rick "
+            "PICK 6 AUTO GLOBO GYM PURPLE COBRAS ROUND 2 PICK 11 AUTO rick")
+    assert parse_pick_train(text) == (4, "big P", 1)
+    assert parse_pick_train("DRAFTING IN 00:24 PICK 1 AUTO Amon Drugz") == (None, "", None)

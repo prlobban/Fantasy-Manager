@@ -56,6 +56,9 @@ class DraftConfig:
     use_browser: bool = True
     max_minutes: int = 240
     draft_url: str | None = None
+    #: A League-Specific Practice Draft: skip the 10:00 order lock (the room
+    #: seats us at the slot we chose) and read picks from the DOM only.
+    practice: bool = False
 
 
 @dataclass
@@ -98,7 +101,12 @@ def preflight(cfg: DraftConfig) -> tuple[board_mod.Board, RoomModel]:
     # so pick_order here is whatever ESPN says right now — but "right now" is
     # only meaningful once the randomisation has happened. Starting the loop
     # before then would plan the whole draft around a slot we are about to lose.
-    _assert_pick_order_final(bd)
+    if cfg.practice:
+        log.warning("PRACTICE room: skipping the order lock; our slot is whatever "
+                    "was chosen on the practice panel and must match the league's "
+                    "current slot for pick numbers to line up")
+    else:
+        _assert_pick_order_final(bd)
 
     c = client()
     room = RoomModel(facts=bd.facts, my_team_id=c.my_team_id)
@@ -175,20 +183,49 @@ def run(cfg: DraftConfig | None = None) -> DraftStats:
                 f"/football/team?leagueId={s_.league_id}&seasonId={s_.season}"
                 f"&teamId={room.my_team_id}"
             )
-            url = cfg.draft_url or (
-                f"/football/draft?leagueId={s_.league_id}&seasonId={s_.season}"
-            )
-            session.goto(url, require_owner_markers=False)
+            # Verified 2026-09-04: the room URL carries teamId and memberId
+            # (our SWID). Without them the draft path bounces to the fantasy
+            # home page. The room only exists once the draft is open.
+            if cfg.practice and not cfg.draft_url:
+                slot = bd.facts.pick_order.index(room.my_team_id) + 1
+                _open_practice_room(session, slot)
+            else:
+                url = cfg.draft_url or (
+                    f"/football/draft?leagueId={s_.league_id}&seasonId={s_.season}"
+                    f"&teamId={room.my_team_id}&memberId={settings().swid}"
+                )
+                session.goto(url, require_owner_markers=False)
+            _wait_for_room(session)
             qsync = QueueSync(session, by_id=by_id)
             dom_reader = DomReader(session, by_name=_by_name(bd), n_teams=room.n_teams)
 
-        reader = FallbackReader(ApiReader(by_id=by_id), dom_reader)
+        api_reader = ApiReader(by_id=by_id)
+        if cfg.practice and dom_reader is not None:
+            # The league's mDraftDetail knows nothing about a practice room.
+            reader = FallbackReader(_NoPicks(), dom_reader)
+        else:
+            reader = FallbackReader(api_reader, dom_reader)
+
+        global _READER
+        _READER = reader
 
         notify("info", "Draft loop started" + (" (DRY RUN)" if cfg.dry_run else ""),
                f"{bd.facts.settings.name} · our picks {room.my_picks}")
 
         deadline = time.monotonic() + cfg.max_minutes * 60
         last_plan = None
+        me = settings().team_name.strip().casefold()
+
+        def dom_says_our_turn() -> bool:
+            # The room model lags the DOM by a cycle; the pick train knows
+            # first. Editing the queue on our own turn just burns the add
+            # budget on ":03" countdown buttons — and a sync that runs through
+            # our clock blocks the click.
+            if dom_reader is None:
+                return False
+            _, who = dom_reader.on_the_clock()
+            return bool(who) and who.strip().casefold() == me
+
         #: overall pick number -> (attempts, monotonic time of the last one).
         #: ESPN's API can lag the click by seconds; without this the loop
         #: re-clicked the same player every 2s until the pick showed up.
@@ -204,6 +241,8 @@ def run(cfg: DraftConfig | None = None) -> DraftStats:
                 if new or last_plan is None:
                     stats.picks_seen = room.picks_made
                     last_plan = picker.rank(rows, room)
+                    if qsync and new:
+                        qsync.reset_attempts()
 
                     if new:
                         log.info(
@@ -217,26 +256,51 @@ def run(cfg: DraftConfig | None = None) -> DraftStats:
                 # Every cycle, not only after a new pick: when nothing changed
                 # this is one DOM read and zero ops, and when an op failed to
                 # land last time this is what retries it.
-                if qsync and last_plan and last_plan.candidates:
+                #
+                # Except on our own turn. Verified 2026-09-04: while we are on
+                # the clock the queue's Remove buttons become DRAFT buttons, so
+                # edits cannot land. The queue was synced on the cycles before;
+                # the click below goes for the true #1 regardless.
+                our_turn = room.on_the_clock_is_us or dom_says_our_turn()
+                if qsync and not our_turn and not cfg.dry_run and qsync.ensure_autopick_off():
+                    notify("warn", "ESPN had switched us to Autopick — turned it off",
+                           "This happens after a missed pick. The queue covered it.")
+                if qsync and last_plan and last_plan.candidates and not our_turn:
                     target = [c.player.espn_id for c in last_plan.top(depth)]
-                    ops, ok = qsync.sync(target, dry_run=cfg.dry_run)
+                    ops, ok = qsync.sync(target, dry_run=cfg.dry_run,
+                                         budget_s=QUEUE_SYNC_BUDGET_S,
+                                         abort=dom_says_our_turn)
+                    our_turn = room.on_the_clock_is_us or dom_says_our_turn()
                     stats.queue_ops += ok
                     if ops and ok < len(ops):
                         log.warning("queue sync: only %d/%d ops landed", ok, len(ops))
 
                 # ── our turn ─────────────────────────────────────────────────
-                if room.on_the_clock_is_us and last_plan and last_plan.best:
+                if our_turn and last_plan and last_plan.best:
+                    # A sync can take 25 s; the plan from the top of the cycle
+                    # may predate the pick right before ours. Rehearsal #4
+                    # clicked on a player the previous team had just taken.
+                    # Re-read and re-rank so the click is on a live target.
+                    if room.apply(reader.read()):
+                        last_plan = picker.rank(rows, room)
+                        if qsync:
+                            qsync.reset_attempts()
                     overall = room.next_overall
                     n_tries, last_at = attempted.get(overall, (0, 0.0))
-                    if n_tries == 0 or (
+                    if last_plan.best and (n_tries == 0 or (
                         n_tries < PICK_MAX_ATTEMPTS
                         and time.monotonic() - last_at >= PICK_RETRY_SECONDS
-                    ):
+                    )):
                         attempted[overall] = (n_tries + 1, time.monotonic())
-                        _make_pick(session, cfg, room, last_plan, stats,
-                                   retry=n_tries > 0)
+                        counted = _make_pick(session, cfg, room, last_plan, stats,
+                                             retry=n_tries > 0)
+                        if not counted:
+                            # The target was gone anyway: not an attempt. Go
+                            # again next cycle rather than after the retry wait.
+                            attempted[overall] = (n_tries, 0.0)
                         # Re-read immediately so we don't double-pick.
-                        room.apply(reader.read())
+                        if room.apply(reader.read()):
+                            last_plan = picker.rank(rows, room)
 
                 if reader.is_complete() or room.is_complete:
                     log.info("draft complete")
@@ -268,9 +332,26 @@ def run(cfg: DraftConfig | None = None) -> DraftStats:
 PICK_MAX_ATTEMPTS = 2
 PICK_RETRY_SECONDS = 20.0
 
+#: Longest a single queue sync may run before yielding to the next cycle.
+#: Well under the shortest gap between two picks in the real room (~30 s
+#: when a manager is quick), so the loop never goes dark across a pick.
+QUEUE_SYNC_BUDGET_S = 25.0
+
+
+_READER = None  # set by run(); lets _make_pick re-read after a DRAFTED refusal
+
+
+def _reread(room: RoomModel) -> list:
+    try:
+        return _READER.read() if _READER is not None else []
+    except Exception:
+        return []
+
 
 def _make_pick(session, cfg: DraftConfig, room: RoomModel, plan, stats: DraftStats,
-               *, retry: bool = False) -> None:
+               *, retry: bool = False) -> bool:
+    """Try to draft plan.best. Returns False only when the target turned out
+    to be already drafted — a stale plan, not a failed attempt."""
     best = plan.best
     runner_up = plan.candidates[1] if len(plan.candidates) > 1 else None
 
@@ -297,7 +378,7 @@ def _make_pick(session, cfg: DraftConfig, room: RoomModel, plan, stats: DraftSta
                              reason=f"queue-only mode; expecting autopick of {best.player.name}",
                              predicted=predicted, alternative=alternative, executed=False)
         log.info("queue-only: leaving %s at the top for autopick", best.player.name)
-        return
+        return True
 
     from core.gates import write_gate
 
@@ -330,16 +411,93 @@ def _make_pick(session, cfg: DraftConfig, room: RoomModel, plan, stats: DraftSta
             # dry-run: gate passed, nothing was clicked
             log.info("DRY RUN pick %d would be %s", room.next_overall, best.player.name)
     except Exception as e:
+        if "DRAFTED" in str(e):
+            # Either the pick before ours took him (stale plan: re-rank and
+            # go again), or ESPN's Autopick already drafted him FOR US from
+            # the top of our queue the instant our turn began.
+            room.apply(_reread(room))
+            ours = {p.espn_id for p in room.picks if p.team_id == room.my_team_id}
+            if best.player.espn_id in ours:
+                stats.our_picks.append(best.player.name)
+                log.info("%s was autopicked for us from the queue — counting it", best.player.name)
+                notify("action", f"Pick {room.next_overall - 1}: {best.player.name} (via queue)",
+                       f"{best.player.pos.value} · VOR {best.valuation.vor:.1f} · tier "
+                       f"{best.valuation.tier} · ESPN autopicked him from the top of our queue.")
+                return True
+            log.warning("target %s was already drafted — re-ranking", best.player.name)
+            return False
         stats.errors.append(f"pick failed: {e}")
         notify("warn", "Click leg failed — falling back to the queue",
                f"{best.player.name} is top of the queue; ESPN will autopick him "
                f"when the timer expires.\n{e}")
+    return True
 
 
 def _by_name(bd) -> dict:
     from core.browser import selectors as S
 
     return {S.norm(p.name): p for p in bd.players}
+
+
+class _NoPicks:
+    """An API reader that never sees a pick — for practice rooms, which the
+    league's draft record does not track."""
+
+    def read(self) -> list:
+        return []
+
+    def is_complete(self) -> bool:
+        return False
+
+
+def _open_practice_room(session, slot: int) -> None:
+    """Start a League-Specific Practice Draft from the team page at `slot`.
+
+    Verified 2026-09-04: the Practice Draft button opens an inline panel with
+    a 1-10 position picker and a Start button; Start opens the room in a new
+    page. That page becomes the session's page for the rest of the run.
+    """
+    page = session.page
+    page.locator("button:has-text('Practice Draft')").first.click()
+    page.wait_for_timeout(1500)
+    page.locator(f"label:has-text('{slot}')").first.click()
+    with session._ctx.expect_page(timeout=30_000) as ev:
+        page.locator("button:has-text('Start Practice Draft')").first.click()
+    room = ev.value
+    try:
+        room.wait_for_load_state("networkidle", timeout=30_000)
+    except Exception:
+        pass
+    session.page = room
+    log.info("practice room opened at slot %d: %s", slot, room.url)
+    notify("info", "Practice room opened", f"slot {slot}\n{room.url}")
+
+
+def _wait_for_room(session, timeout_ms: int = 60_000) -> None:
+    """Block until the room has rendered its player table and pick train.
+
+    The room is a popup-style SPA that takes several seconds to hydrate;
+    reading it before then finds zero rows and an empty queue container.
+    """
+    from core.browser import selectors as S
+
+    page = session.page
+    try:
+        page.wait_for_selector(S.DRAFT_PLAYER_ROW.split(",")[0].strip(), timeout=timeout_ms)
+    except Exception as e:
+        session.screenshot("room-not-rendered")
+        raise RuntimeError(
+            f"the draft room did not render a player table within {timeout_ms}ms at "
+            f"{page.url} — wrong URL, or the room is not open yet"
+        ) from e
+    # Kill the per-pick animation overlay, which swallows clicks and drags.
+    try:
+        page.add_style_tag(content=S.ROOM_CSS)
+    except Exception as e:
+        log.warning("could not inject room CSS: %s", e)
+    train = S.first_present(page, S.DRAFT_PICK_TRAIN)
+    if train is not None:
+        log.info("room: %s", " ".join((train.first.inner_text() or "").split())[:160])
 
 
 def _postflight(bd, room: RoomModel, stats: DraftStats) -> None:

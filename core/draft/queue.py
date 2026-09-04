@@ -8,13 +8,12 @@ state of the world in which we get ESPN's list.
 Two halves, deliberately separated:
 
   plan_ops()  — pure. Given the current queue and the target, produce the
-                minimal ordered list of add/remove/move operations. Fully
-                testable with no browser.
+                ordered list of remove/add operations. Fully testable with no
+                browser.
   QueueSync   — executes those ops against the page.
 
-Minimal diffing matters on the clock: rebuilding a 12-deep queue from scratch
-after every pick in the room would be ~24 UI operations per pick. A diff is
-usually 1–3.
+Diffing matters on the clock: a full rebuild of an 8-deep queue is ~16 UI
+operations at ~2 s each. The common case after an opposing pick is 0–1.
 """
 
 from __future__ import annotations
@@ -25,68 +24,59 @@ from typing import Literal
 
 log = logging.getLogger(__name__)
 
-OpKind = Literal["remove", "add", "move"]
+OpKind = Literal["remove", "add"]
 
 
 @dataclass(frozen=True)
 class QueueOp:
     kind: OpKind
     espn_id: int
-    #: Target index for add/move. Ignored for remove.
+    #: Position the add is expected to land at. Ignored for remove.
     index: int = 0
     reason: str = ""
 
 
-def plan_ops(current: list[int], target: list[int]) -> list[QueueOp]:
-    """Minimal ops to turn `current` into `target`.
-
-    Strategy:
-      1. Remove anything not in the target (drafted players, demoted names).
-      2. Add anything missing. **An add lands at the END of the queue** — that
-         is what ESPN's "add to queue" control does, and the model here has to
-         match the UI or the moves computed from it are wrong. The first
-         version modelled adds as insert-at-index; for current=[A],
-         target=[B, A] it emitted one add and zero moves, and the live queue
-         ended up [A, B] with the wrong player on top. Caught 2026-09-04.
-      3. Walk the target left to right; anything already in the right place
-         costs nothing, anything else is moved into position.
-
-    Step 3 is a single forward pass rather than anything cleverer, and that is
-    deliberate. An earlier version anchored on the longest common subsequence to
-    shave a move or two; the anchors went stale as each move shifted the list,
-    and a property test caught it producing the wrong final order. On the clock,
-    a provably correct queue beats a marginally shorter op list.
-
-    Order is preserved exactly, because position 1 is the only entry ESPN's
-    autopick actually reads first.
-    """
-    ops: list[QueueOp] = []
-    target_set = set(target)
-
-    # 1 — removals
-    working = []
-    for pid in current:
-        if pid in target_set:
-            working.append(pid)
+def _kept_prefix_len(current: list[int], target: list[int]) -> int:
+    """Largest k such that target[:k] appears in `current` in that order."""
+    best = 0
+    for k in range(1, len(target) + 1):
+        it = iter(current)
+        if all(any(c == t for c in it) for t in target[:k]):
+            best = k
         else:
-            ops.append(QueueOp("remove", pid, reason="not in target"))
+            break
+    return best
 
-    # 2 — additions. Each one appends; step 3 moves it into place.
-    working_set = set(working)
-    for idx, pid in enumerate(target):
-        if pid not in working_set:
-            ops.append(QueueOp("add", pid, index=idx, reason="new to queue"))
-            working.append(pid)
-            working_set.add(pid)
 
-    # 3 — reorder, forward pass. Entries already correct are skipped for free.
-    for idx, pid in enumerate(target):
-        cur_idx = working.index(pid)
-        if cur_idx != idx:
-            ops.append(QueueOp("move", pid, index=idx, reason=f"{cur_idx}->{idx}"))
-            working.pop(cur_idx)
-            working.insert(idx, pid)
+def plan_ops(current: list[int], target: list[int]) -> list[QueueOp]:
+    """Ops to turn `current` into `target`, using REMOVE and ADD only.
 
+    Verified 2026-09-04 in live practice rooms: "add to queue" APPENDS, "Remove"
+    works, and drag-and-drop reorder lands about one time in seven. So the
+    plan never relies on a move. The only orderings reachable with remove +
+    append are: (some subsequence of current, in its current order) followed
+    by (new appends). Hence:
+
+      1. Keep the longest prefix of `target` that already sits in `current`
+         in the right relative order.
+      2. Remove everything else that is in `current`.
+      3. Append the rest of `target`, in target order — so position 1 is
+         correct after the FIRST add even if the rest never lands.
+
+    Common cases: an opponent takes someone deep in our queue -> one remove.
+    Our #1 is drafted and the rest shifts up -> one add (ESPN drops drafted
+    players from the queue itself). A re-rank that changes the top -> a
+    rebuild, which is the price of a queue that is provably right.
+    """
+    k = _kept_prefix_len(current, target)
+    keep = set(target[:k])
+    ops: list[QueueOp] = [
+        QueueOp("remove", pid, reason="not kept") for pid in current if pid not in keep
+    ]
+    ops += [
+        QueueOp("add", pid, index=k + i, reason="append in target order")
+        for i, pid in enumerate(target[k:])
+    ]
     return ops
 
 
@@ -102,7 +92,7 @@ class QueueSync:
     #: up in a re-read. A name the queue renders differently from the board
     #: would otherwise be re-added every cycle, and on ESPN the add control is
     #: a toggle — a second click can REMOVE him.
-    MAX_ADD_ATTEMPTS = 2
+    MAX_ADD_ATTEMPTS = 4
 
     def __init__(self, session, by_id: dict[int, object] | None = None):
         from core.browser import selectors as S
@@ -117,6 +107,39 @@ class QueueSync:
         self._add_attempts: dict[int, int] = {}
         self._last_good: list[int] = []
 
+    def ensure_autopick_off(self) -> bool:
+        """Switch ESPN's Autopick toggle OFF if it is on. Returns True if it
+        had to.
+
+        Verified 2026-09-04 (rehearsal #4): after ONE missed pick ESPN flips
+        the team to Autopick, and every later turn is filled instantly from
+        the top of the queue — before any click can run. That is the safety
+        net in its purest form, but it takes the decision away from the loop
+        (no re-rank after the pick before ours). So the loop turns it back
+        off. If the toggle cannot be found, nothing happens.
+        """
+        from core.browser import selectors as S
+
+        try:
+            box = self.s.page.locator(S.QUEUE_AUTOPICK_TOGGLE)
+            if box.count() == 0 or not box.first.is_checked():
+                return False
+            # The input is visually hidden; its label is the click target.
+            label = box.first.locator("xpath=ancestor::label[1]")
+            (label if label.count() else box).first.click(force=True, timeout=2_000)
+            self.s.page.wait_for_timeout(400)
+            still = box.first.is_checked()
+            log.warning("ESPN had Autopick ON for us — switched it %s",
+                        "off" if not still else "OFF FAILED (still on)")
+            return not still
+        except Exception as e:
+            log.info("autopick check failed: %s", str(e)[:80])
+            return False
+
+    def reset_attempts(self) -> None:
+        """The room moved on (a new pick landed): earlier failures are stale."""
+        self._add_attempts.clear()
+
     # ── read ─────────────────────────────────────────────────────────────────
 
     def read_current(self) -> list[int] | None:
@@ -126,20 +149,34 @@ class QueueSync:
         empty queue. sync() skips a None read rather than re-adding everything,
         because a queue that flickered out of the DOM for one render is not a
         queue that emptied.
+
+        Verified 2026-09-04: every queue row carries the ESPN player id in
+        `data-drag-id`. That is the read. Names are only a fallback, and they
+        are abbreviated in the queue ("J. Taylor"), so a name match is a last
+        resort, not the mechanism.
         """
         from core.browser import selectors as S
 
-        rows = S.first_present(self.s.page, S.QUEUE_ROW)
-        if rows is None:
+        page = self.s.page
+        if S.first_present(page, S.QUEUE_CONTAINER) is None:
             log.warning("queue container not found — selectors may be stale")
             return None
         out: list[int] = []
+        rows = page.locator(S.QUEUE_ROW)
         for i in range(rows.count()):
+            row = rows.nth(i)
+            pid: int | None = None
             try:
-                text = rows.nth(i).inner_text() or ""
+                raw = row.get_attribute(S.QUEUE_ROW_ID_ATTR)
+                if raw and raw.lstrip("-").isdigit():
+                    pid = int(raw)
             except Exception:
-                continue
-            pid = self._id_from_text(text)
+                pass
+            if pid is None:
+                try:
+                    pid = self._id_from_text(row.inner_text() or "")
+                except Exception:
+                    pid = None
             if pid is not None and pid not in out:
                 out.append(pid)
         return out
@@ -157,17 +194,35 @@ class QueueSync:
 
     # ── write ────────────────────────────────────────────────────────────────
 
-    def apply(self, ops: list[QueueOp]) -> tuple[int, int]:
-        """Run the ops. Returns (succeeded, attempted)."""
+    def apply(self, ops: list[QueueOp], *, budget_s: float | None = None,
+              abort=None) -> tuple[int, int]:
+        """Run the ops. Returns (succeeded, attempted).
+
+        Time-boxed, and abortable. Rehearsal #3 (2026-09-04) lost a pick to a
+        sync that started two seconds before our turn and ran through the
+        whole clock; the click leg never got a look in and ESPN autopicked
+        from the queue. So a sync stops issuing ops when `budget_s` runs out
+        or when `abort()` says we are on the clock — the rest waits for the
+        next cycle. The queue being a little behind is fine; the click being
+        blocked is not.
+        """
+        import time
+
         ok = 0
-        for op in ops:
+        start = time.monotonic()
+        for i, op in enumerate(ops):
+            if budget_s is not None and time.monotonic() - start > budget_s:
+                log.info("queue sync: budget of %.0fs spent after %d/%d ops — rest next cycle",
+                         budget_s, i, len(ops))
+                break
+            if abort is not None and abort():
+                log.info("queue sync: aborted after %d/%d ops — we are on the clock", i, len(ops))
+                break
             try:
                 if op.kind == "remove":
                     done = self._remove(op.espn_id)
-                elif op.kind == "add":
-                    done = self._add(op.espn_id)
                 else:
-                    done = self._move(op.espn_id, op.index)
+                    done = self._add(op.espn_id)
                 ok += int(done)
             except Exception as e:
                 log.warning("queue op %s %s failed: %s", op.kind, op.espn_id, e)
@@ -181,25 +236,64 @@ class QueueSync:
             return False
         attempts = self._add_attempts.get(espn_id, 0)
         if attempts >= self.MAX_ADD_ATTEMPTS:
-            log.warning("not re-adding %s to the queue: %d attempts never showed up "
-                        "in a re-read (name mismatch?)", getattr(pl, "name", espn_id), attempts)
+            log.warning("not re-adding %s to the queue: %d clicks never showed up "
+                        "in a re-read", getattr(pl, "name", espn_id), attempts)
             return False
-        self._add_attempts[espn_id] = attempts + 1
 
         page = self.s.page
         name = getattr(pl, "name", "")
-        box = S.first_present(page, S.DRAFT_SEARCH)
-        if box is None:
+        # The table is virtualised: the player must be searched into view.
+        # Search applies on ENTER (verified), and it must be cleared after,
+        # or the table stays filtered to one row for the rest of the draft.
+        if not S.search_player(page, name, settle_ms=700):
             return False
-        box.first.fill(name)
-        page.wait_for_timeout(400)
-        # The button must be in the row that carries THIS player's name. The
-        # first add-button on the page after a search is not necessarily his.
-        btn = S.in_row_with(page, name, S.QUEUE_ADD_BUTTON)
-        if btn is None:
+        try:
+            row = S.player_row(page, name)
+            if row is None:
+                log.warning("queue add: no row for %r after search", name)
+                return False
+            btn = row.locator(S.QUEUE_ADD_BUTTON)
+            if btn.count() == 0:
+                # Already queued, just drafted (the DOM knows before our
+                # reader does), or we are on the clock and the button reads
+                # DRAFT. Nothing to add here; say which.
+                labels = [t.strip() for t in row.locator("button").all_inner_texts()]
+                log.info("queue add: %r has no QUEUE button (%s)", name, labels or "none")
+                if any("DRAFTED" in lb.upper() for lb in labels):
+                    self._add_attempts[espn_id] = self.MAX_ADD_ATTEMPTS
+                return False
+            # Verified 2026-09-04: a click that "succeeds" does not always add.
+            # Prove it by re-reading the queue; one retry with a forced click.
+            # Only a click that actually happened counts against the budget;
+            # a row that was not there is a transient, not evidence.
+            self._add_attempts[espn_id] = attempts + 1
+            # The table re-renders on every pick in the room, and a click on a
+            # button that is being re-mounted is lost. Three escalating tries:
+            # a normal click, a forced one, then a DOM-dispatched click that
+            # needs no hit-testing at all.
+            for attempt in range(3):
+                try:
+                    if attempt == 0:
+                        btn.first.click(timeout=2_500)
+                    elif attempt == 1:
+                        btn.first.click(force=True, timeout=2_500)
+                    else:
+                        btn.first.dispatch_event("click", timeout=2_000)
+                except Exception as e:
+                    log.info("queue add: click %d on %r failed: %s", attempt + 1, name,
+                             str(e).splitlines()[0][:90])
+                page.wait_for_timeout(600)
+                if espn_id in (self.read_current() or []):
+                    return True
+                # He may have been drafted in the meantime: then stop trying.
+                labels = [t.strip().upper() for t in row.locator("button").all_inner_texts()]
+                if any("DRAFTED" in lb for lb in labels):
+                    self._add_attempts[espn_id] = self.MAX_ADD_ATTEMPTS
+                    return False
+            log.warning("queue add: %r clicked three ways, never appeared in the queue", name)
             return False
-        btn.first.click()
-        return True
+        finally:
+            S.clear_search(page)
 
     def _remove(self, espn_id: int) -> bool:
         from core.browser import selectors as S
@@ -211,42 +305,24 @@ class QueueSync:
         if btn.count() == 0:
             return False
         btn.first.click()
+        self.s.page.wait_for_timeout(400)
         return True
-
-    def _move(self, espn_id: int, index: int) -> bool:
-        """Reorder is drag-and-drop in ESPN's queue, which is the least reliable
-        interaction available. Preferred fallback: remove and re-add, which puts
-        the player back at a known position."""
-        from core.browser import selectors as S
-
-        row = self._queue_row_for(espn_id)
-        if row is None:
-            return False
-        try:
-            rows = S.first_present(self.s.page, S.QUEUE_ROW)
-            if rows is None or index >= rows.count():
-                return False
-            row.first.drag_to(rows.nth(index))
-            return True
-        except Exception:
-            # Remove + re-add puts him at the END, not at `index`. It is only
-            # correct when the target is the last slot; otherwise say so.
-            if self._remove(espn_id) and self._add(espn_id):
-                if index < len(self._last_good) - 1:
-                    log.warning("move fallback for %s landed at the end, wanted %d — "
-                                "the next sync will retry", espn_id, index)
-                return True
-            return False
 
     def _queue_row_for(self, espn_id: int):
         from core.browser import selectors as S
 
+        page = self.s.page
+        by_attr = page.locator(f"{S.QUEUE_CONTAINER.split(',')[0].strip()} "
+                               f"tr[{S.QUEUE_ROW_ID_ATTR}='{espn_id}']")
+        try:
+            if by_attr.count():
+                return by_attr.first
+        except Exception:
+            pass
         pl = self.by_id.get(espn_id)
         if pl is None:
             return None
-        rows = S.first_present(self.s.page, S.QUEUE_ROW)
-        if rows is None:
-            return None
+        rows = page.locator(S.QUEUE_ROW)
         want = S.norm(getattr(pl, "name", ""))
         for i in range(rows.count()):
             try:
@@ -258,7 +334,8 @@ class QueueSync:
 
     # ── the thing the draft loop calls ───────────────────────────────────────
 
-    def sync(self, target: list[int], *, dry_run: bool = False) -> tuple[list[QueueOp], int]:
+    def sync(self, target: list[int], *, dry_run: bool = False,
+             budget_s: float | None = 25.0, abort=None) -> tuple[list[QueueOp], int]:
         """Bring the live queue in line with `target`. Returns (ops, succeeded).
 
         Cheap when nothing changed (one DOM read, zero ops), so the loop calls
@@ -282,5 +359,5 @@ class QueueSync:
         log.info("queue sync: %d ops (current=%d, target=%d)", len(ops), len(current), len(target))
         if dry_run:
             return ops, 0
-        ok, _ = self.apply(ops)
+        ok, _ = self.apply(ops, budget_s=budget_s, abort=abort)
         return ops, ok

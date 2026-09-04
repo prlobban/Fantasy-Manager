@@ -85,32 +85,102 @@ class ApiReader:
         return self._total_slots
 
 
+#: Runs in the page: every completed Board cell as {rp, first, last, team, pos}.
+#: The Board tab is display:none until clicked, so this reads textContent,
+#: which inner_text() would return empty for. Verified 2026-09-04.
+_BOARD_JS = """
+() => Array.from(document.querySelectorAll(%r)).map(c => ({
+  rp:    (c.querySelector('.roundPick') || {}).textContent || '',
+  first: (c.querySelector('.playerFirstName') || {}).textContent || '',
+  last:  (c.querySelector('.playerLastName') || {}).textContent || '',
+  team:  (c.querySelector('.playerProTeam') || {}).textContent || '',
+  pos:   (c.querySelector('.positionPill') || {}).textContent || '',
+}))
+"""
+
+_POS_TEXT = {"QB": Pos.QB, "RB": Pos.RB, "WR": Pos.WR, "TE": Pos.TE, "K": Pos.K,
+             "D/ST": Pos.DST, "DST": Pos.DST}
+
+
 class DomReader:
     """Parse picks out of the draft-room page.
 
-    Selector-driven, so everything it depends on lives in browser/selectors.py
-    and can be re-pointed after an ESPN redesign without touching this logic.
+    Primary source: the Board grid, which holds every completed pick as a
+    cell with round.pick, full name, team and position — and is present in
+    the DOM whether or not its tab is showing. Fallback: the Pick History
+    rows. Selector-driven, so everything it depends on lives in
+    browser/selectors.py and can be re-pointed after an ESPN redesign.
     """
 
     def __init__(self, session, by_name: dict[str, Player] | None = None,
                  n_teams: int = 0):
         self.s = session
         self.by_name = by_name or {}
-        #: Needed to turn a "R3 P4" row into an overall pick number. Without it
-        #: the encoded negative placeholder would reach the room model as-is.
+        #: Needed to turn "3.4" / "R3 P4" into an overall pick number.
         self.n_teams = n_teams
         self._complete = False
+        self._total_cells: int | None = None
 
     def read(self) -> list[Pick]:
+        picks = self._read_board()
+        if picks:
+            return picks
+        return self._read_history()
+
+    def _lookup(self, name: str) -> Player | None:
+        from core.browser import selectors as S
+
+        return self.by_name.get(S.norm(name))
+
+    def _read_board(self) -> list[Pick]:
+        from core.browser import selectors as S
+
+        try:
+            cells = self.s.page.evaluate(_BOARD_JS % S.DRAFT_BOARD_CELL_DONE)
+            self._total_cells = self.s.page.locator(S.DRAFT_BOARD_CELL_ANY).count() or None
+        except Exception as e:
+            log.debug("board read failed: %s", e)
+            return []
+        seen: dict[int, Pick] = {}
+        for c in cells:
+            rp = (c.get("rp") or "").strip()
+            if "." not in rp:
+                continue
+            try:
+                rnd, pk = (int(x) for x in rp.split(".", 1))
+            except ValueError:
+                continue
+            if not self.n_teams:
+                continue
+            overall = (rnd - 1) * self.n_teams + pk
+            name = f"{c.get('first', '').strip()} {c.get('last', '').strip()}".strip()
+            if not name:
+                continue
+            pl = self._lookup(name)
+            seen.setdefault(overall, Pick(
+                overall=overall,
+                team_id=0,  # room.apply infers it from the snake order
+                espn_id=pl.espn_id if pl else -1,
+                pos=pl.pos if pl else _POS_TEXT.get((c.get("pos") or "").strip().upper()),
+                name=pl.name if pl else name,
+            ))
+        if self._total_cells and len(seen) >= self._total_cells:
+            self._complete = True
+        return [seen[k] for k in sorted(seen)]
+
+    def _read_history(self) -> list[Pick]:
         from core.browser import selectors as S
 
         page = self.s.page
         rows = page.locator(S.DRAFT_PICK_ROW)
-        n = rows.count()
+        try:
+            n = rows.count()
+        except Exception:
+            return []
         seen: dict[int, Pick] = {}
         for i in range(n):
             try:
-                text = (rows.nth(i).inner_text() or "").strip()
+                text = (rows.nth(i).text_content() or "").strip()
             except Exception:
                 continue
             parsed = S.parse_pick_row(text)
@@ -119,27 +189,39 @@ class DomReader:
             overall, name = parsed
             if overall < 0:
                 if not self.n_teams:
-                    log.warning("pick row %r is in round/pick form and n_teams is "
-                                "unknown — skipping", text[:40])
                     continue
                 overall = S.decode_round_pick(overall, self.n_teams)
-            pl = self.by_name.get(S.norm(name))
+            pl = self._lookup(name)
             seen.setdefault(overall, Pick(
-                overall=overall,
-                team_id=0,  # the DOM doesn't expose it; room.apply infers from the order
+                overall=overall, team_id=0,
                 espn_id=pl.espn_id if pl else -1,
                 pos=pl.pos if pl else None,
                 name=name,
             ))
         return [seen[k] for k in sorted(seen)]
 
-    def is_complete(self) -> bool:
+    def on_the_clock(self) -> tuple[int | None, str]:
+        """(overall pick on the clock, team name), straight from the pick train."""
         from core.browser import selectors as S
 
         try:
+            loc = S.first_present(self.s.page, S.DRAFT_PICK_TRAIN)
+            if loc is None:
+                return None, ""
+            pick, team, _ = S.parse_pick_train(loc.first.inner_text() or "")
+            return pick, team
+        except Exception:
+            return None, ""
+
+    def is_complete(self) -> bool:
+        from core.browser import selectors as S
+
+        if self._complete:
+            return True
+        try:
             return self.s.page.locator(S.DRAFT_COMPLETE).count() > 0
         except Exception:
-            return self._complete
+            return False
 
 
 class FallbackReader:

@@ -24,7 +24,7 @@ model:
 
 draft:
   # §3.3 — how many players to keep in the live ESPN queue at all times.
-  queue_depth: 12
+  queue_depth: 8
 
   # §3.6 — a positional run is on when this many of the last N picks are one position.
   run_detect_count: 3

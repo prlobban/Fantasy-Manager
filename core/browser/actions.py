@@ -91,23 +91,70 @@ def draft_player(s: EspnSession, espn_id: int, name: str) -> Receipt:
     page = s.page
     s.dismiss_overlays()
 
-    box = _need(page, S.DRAFT_SEARCH, what="the draft-room player search box")
-    box.first.fill(name)
-    page.wait_for_timeout(500)
+    # Verified 2026-09-04 in a live practice room:
+    #   - for the first ~3.5 s of our turn every DRAFT button shows a ":03"
+    #     countdown and is inert; then it reads DRAFT. So: wait for it.
+    #   - a queued player's QUEUE row grows its own DRAFT button on our turn.
+    #     If the target is already queued (he usually is — the queue is synced
+    #     before the click), that button is the shortest path: no search.
+    #   - otherwise the table is virtualised: search (ENTER applies), find the
+    #     row whose NAME cell is his, click DRAFT there, clear the search.
+    row = None
+    queued = page.locator(f"{S.QUEUE_CONTAINER.split(',')[0].strip()} "
+                          f"tr[{S.QUEUE_ROW_ID_ATTR}='{espn_id}']")
+    try:
+        if queued.count():
+            row = queued.first
+    except Exception:
+        row = None
 
-    btn = _need_in_row(page, name, S.DRAFT_BUTTON, what="a Draft button")
-    btn.first.click()
+    searched = False
+    try:
+        if row is None:
+            if not S.search_player(page, name):
+                raise ActionFailed("could not find the draft-room player search box")
+            searched = True
+            row = S.player_row(page, name)
+            if row is None:
+                raise ActionFailed(f"no player-table row for {name!r} after searching — "
+                                   "already drafted, or the search did not apply")
 
-    # ESPN usually asks to confirm. Absence of a dialog is fine.
-    confirm = S.first_present(page, S.CONFIRM_BUTTON)
-    if confirm is not None:
+        btn = _wait_for_draft_button(page, row, timeout_ms=8_000)
+        if btn is None:
+            labels = [t.strip() for t in row.locator("button").all_inner_texts()]
+            raise ActionFailed(f"row for {name!r} never showed a DRAFT button "
+                               f"(buttons: {labels}) — are we on the clock?")
+        btn.first.click()
+
+        # ESPN may ask to confirm. Absence of a dialog is fine.
+        confirm = S.first_present(page, S.CONFIRM_BUTTON)
+        if confirm is not None:
+            try:
+                confirm.first.click(timeout=3000)
+            except Exception:
+                pass
+        page.wait_for_timeout(1200)
+    finally:
+        if searched:
+            S.clear_search(page)
+
+    return _receipt(s, "draft pick", f"{name} ({espn_id})", verified=False)
+
+
+def _wait_for_draft_button(page, row, *, timeout_ms: int):
+    """The row's DRAFT button once ESPN's start-of-turn countdown has cleared."""
+    import time
+
+    deadline = time.monotonic() + timeout_ms / 1000.0
+    while time.monotonic() < deadline:
         try:
-            confirm.first.click(timeout=3000)
+            btn = row.locator(S.DRAFT_BUTTON)
+            if btn.count() and btn.first.is_enabled():
+                return btn
         except Exception:
             pass
-
-    page.wait_for_timeout(1200)
-    return _receipt(s, "draft pick", f"{name} ({espn_id})", verified=False)
+        page.wait_for_timeout(300)
+    return None
 
 
 # ── lineup ───────────────────────────────────────────────────────────────────

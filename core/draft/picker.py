@@ -220,7 +220,12 @@ def rank(
             # penalty at all and passed straight through at face value. That is
             # how the engine ended up preferring a third-string tight end to a
             # wide receiver in a lineup that had no wide receivers.
-            effective = surplus_mult * max(val.vor, 0.0)
+            # ...and a NEGATIVE VOR is never lifted toward zero: a backup at a
+            # covered position is worth his (negative) VOR at best. The first
+            # rehearsal (2026-09-04) took a second QB at -9 VOR in round 7 with
+            # a starting WR slot still empty, because the floor at zero had
+            # turned -9 into 0.
+            effective = surplus_mult * val.vor if val.vor > 0 else val.vor
             delta = effective - val.vor
             score += delta
             reasons["surplus"] = delta
@@ -237,6 +242,19 @@ def rank(
                 oppo = -_BENCH_OPPORTUNITY_COST * hole_pressure
                 score += oppo
                 reasons["depth_while_short"] = oppo
+
+        # §3.7 — bench spots are a hard budget (4 here). Every body beyond a
+        # position's starters (+ the flex, for RB/WR only) costs a fixed
+        # amount, because in the dead rounds every VOR is negative and a
+        # multiplier has nothing to bite on. The first rehearsal drafted TE2,
+        # TE3 and QB2 that way while starting two receivers. Applied outside
+        # the surplus block on purpose: an open flex does not excuse a TE2.
+        stack = _stack_depth(room, player.pos, my_pos)
+        if stack > 0:
+            pen = -_STACK_PENALTY * stack
+            score += pen
+            reasons["stacking"] = pen
+            notes.append(f"{player.pos.value}{my_pos.get(player.pos, 0) + 1} is depth")
 
         # §3.7 — starting-lineup holes come before depth.
         #
@@ -330,6 +348,10 @@ _HOLE_WEIGHT = 0.15
 #: slot is still empty. [v1 prior]
 _BENCH_OPPORTUNITY_COST = 25.0
 
+#: Season points charged per extra bench body at one position, beyond its
+#: starters and flex share. [v1 prior]
+_STACK_PENALTY = 25.0
+
 _SURPLUS_LADDER_DEEP = (0.30, 0.12, 0.05)    # position has 2+ starting slots
 _SURPLUS_LADDER_SHALLOW = (0.15, 0.06, 0.02)  # position has 1 starting slot
 
@@ -347,6 +369,20 @@ def _flex_open(room: RoomModel, have) -> int:
     return max(0, flex_slots - spare)
 
 
+def _stack_depth(room: RoomModel, pos: Pos, have) -> int:
+    """How many bodies too many `pos` would have if we took this player (>= 0)."""
+    settings = room.facts.settings
+    starters = settings.starters_at(pos)
+    allowance = starters
+    # The flex is one shared slot. Only the two-starter positions (RB, WR)
+    # get to count it as depth; a second TE in a one-TE league is a stack,
+    # not a flex plan (§3.7).
+    if pos in _FLEX_POSITIONS and starters >= 2:
+        allowance += sum(s.count for s in settings.starting_slots if s.is_flex)
+    # `have` is the roster BEFORE this pick; the candidate is the +1.
+    return max(0, have.get(pos, 0) + 1 - allowance)
+
+
 def _surplus_multiplier(room: RoomModel, pos: Pos, have, flex_open: int) -> float:
     """How much of this player's VOR actually reaches our starting lineup.
 
@@ -358,7 +394,9 @@ def _surplus_multiplier(room: RoomModel, pos: Pos, have, flex_open: int) -> floa
 
     if count < settings.starters_at(pos):
         return 1.0
-    if pos in _FLEX_POSITIONS and flex_open > 0:
+    # An open flex is a real starting slot for a spare RB/WR. A second TE in
+    # a one-TE league is not a flex plan (§3.7), so TE gets no exemption.
+    if pos in _FLEX_POSITIONS and flex_open > 0 and settings.starters_at(pos) >= 2:
         return 1.0
 
     depth = count - settings.starters_at(pos)

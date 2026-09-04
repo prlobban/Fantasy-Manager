@@ -29,6 +29,9 @@ def main() -> int:
     ap.add_argument("--poll", type=float, default=2.0)
     ap.add_argument("--depth", type=int, default=None, help="queue depth override")
     ap.add_argument("--url", type=str, default=None, help="draft room URL (practice draft)")
+    ap.add_argument("--practice", action="store_true",
+                    help="rehearse in a League-Specific Practice Draft: opens a room at our "
+                         "real slot (or uses --url), DOM-only reads, no order lock")
     ap.add_argument("--max-minutes", type=int, default=240)
     args = ap.parse_args()
 
@@ -40,6 +43,7 @@ def main() -> int:
         use_browser=not args.no_browser,
         max_minutes=args.max_minutes,
         draft_url=args.url,
+        practice=args.practice,
     ))
     print(f"\ncycles={stats.cycles} picks_seen={stats.picks_seen} "
           f"queue_ops={stats.queue_ops}")

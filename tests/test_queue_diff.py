@@ -26,9 +26,8 @@ def apply_ops(current: list[int], ops: list[QueueOp]) -> list[int]:
                 q.remove(op.espn_id)
         elif op.kind == "add":
             q.append(op.espn_id)
-        else:  # move
-            q.remove(op.espn_id)
-            q.insert(min(op.index, len(q)), op.espn_id)
+        else:
+            raise AssertionError(f"unknown op {op.kind}: the room supports remove and add only")
     return q
 
 
@@ -36,7 +35,7 @@ def test_new_top_pick_is_moved_above_existing_entries():
     """The case that slipped through: our new #1 was not in the queue yet.
     The add appends, so a move MUST follow or position 1 is wrong."""
     ops = plan_ops([1], [2, 1])
-    assert [o.kind for o in ops] == ["add", "move"]
+    assert [(o.kind, o.espn_id) for o in ops] == [("remove", 1), ("add", 2), ("add", 1)]
     assert apply_ops([1], ops) == [2, 1]
 
 
@@ -67,13 +66,28 @@ def test_the_common_case_is_cheap():
     assert apply_ops(current, ops) == target
 
 
-def test_reorder_only_moves_what_is_out_of_place():
+def test_reorder_keeps_the_matching_prefix_and_rebuilds_the_rest():
     current = [1, 2, 3, 4, 5]
     target = [1, 2, 5, 3, 4]
     ops = plan_ops(current, target)
-    assert all(o.kind == "move" for o in ops)
-    assert len(ops) == 1, "LCS should keep 1,2,3,4 anchored and move only 5"
+    # 1,2,5 are already in order -> keep; remove 3,4; append 3,4.
+    assert [(o.kind, o.espn_id) for o in ops] == [
+        ("remove", 3), ("remove", 4), ("add", 3), ("add", 4)]
     assert apply_ops(current, ops) == target
+
+
+def test_opponent_takes_our_number_one_costs_one_add():
+    """ESPN removes a drafted player from the queue itself; we only add."""
+    current = [2, 3, 4, 5]          # 1 was just drafted and vanished
+    target = [2, 3, 4, 5, 6]
+    ops = plan_ops(current, target)
+    assert [(o.kind, o.espn_id) for o in ops] == [("add", 6)]
+
+
+def test_first_add_puts_the_top_pick_first_when_rebuilding():
+    ops = plan_ops([1, 2, 3], [9, 8, 7])
+    adds = [o for o in ops if o.kind == "add"]
+    assert adds[0].espn_id == 9
 
 
 def test_complete_reversal_still_produces_the_target():
@@ -101,9 +115,11 @@ def test_property_result_always_equals_target():
         assert apply_ops(current, plan_ops(current, target)) == target
 
 
-def test_no_duplicate_operations_on_one_player():
+def test_rebuild_never_exceeds_one_remove_and_one_add_per_player():
     current = [1, 2, 3, 4]
     target = [4, 1, 2, 3]
     ops = plan_ops(current, target)
-    touched = [o.espn_id for o in ops]
-    assert len(touched) == len(set(touched))
+    assert apply_ops(current, ops) == target
+    from collections import Counter
+    per = Counter((o.kind, o.espn_id) for o in ops)
+    assert max(per.values()) == 1

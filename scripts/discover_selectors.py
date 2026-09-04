@@ -21,6 +21,8 @@ from core.browser.session import EspnSession
 from core.config import settings
 
 DRAFT_TARGETS = {
+    "DRAFT_BOARD_CELL_ANY": S.DRAFT_BOARD_CELL_ANY,
+    "DRAFT_PICK_TRAIN": S.DRAFT_PICK_TRAIN,
     "DRAFT_PICK_ROW": S.DRAFT_PICK_ROW,
     "DRAFT_ON_CLOCK": S.DRAFT_ON_CLOCK,
     "DRAFT_TIMER": S.DRAFT_TIMER,
@@ -75,7 +77,10 @@ def main() -> int:
         if args.url:
             url = args.url
         elif args.draft:
-            url = f"/football/draft?leagueId={cfg.league_id}&seasonId={cfg.season}"
+            from core.espn.client import client
+
+            url = (f"/football/draft?leagueId={cfg.league_id}&seasonId={cfg.season}"
+                   f"&teamId={client().my_team_id}&memberId={cfg.swid}")
         else:
             url = f"/football/team?leagueId={cfg.league_id}&seasonId={cfg.season}"
 

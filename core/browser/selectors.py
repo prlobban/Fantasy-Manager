@@ -19,64 +19,101 @@ import re
 
 # ── draft room ───────────────────────────────────────────────────────────────
 
-#: Rows in the pick history / "recent picks" list.
-DRAFT_PICK_ROW = (
-    ".draft-columns--pick-history .pick-history-row, "
-    "[class*=pickHistory] [class*=row], "
-    "[class*=draft-pick-row]"
-)
+#
+# ✅ VERIFIED 2026-09-04 against a live League-Specific Practice Draft room
+# (three rooms, headless). The first candidate in each group is the one that
+# resolved; the rest are fallbacks for a redesign. Where a group is a single
+# selector it was verified and has no plausible fallback.
+#
+# Facts about the room worth knowing before touching any of this:
+#   - It opens in a POPUP from the team page:
+#       /football/draft?leagueId=..&seasonId=..&teamId=..&memberId={SWID}
+#   - The Board and Pick History tabs are in the DOM even when hidden
+#     (`tab__item dn`), so picks can be read WITHOUT switching tabs — but a
+#     hidden element's inner_text() is "", so read them with textContent.
+#   - The player table is a virtualised FixedDataTable: only ~20-30 rows exist
+#     at a time. To reach a player, search for him (fill + ENTER; typing alone
+#     does not filter).
+#   - Queue rows carry the ESPN player id in data-drag-id, and show
+#     ABBREVIATED names ("J. Taylor"). Never match the queue by name.
+#   - Drag-and-drop reorder in the queue works with Playwright's drag_to.
 
-#: The "on the clock" banner.
-DRAFT_ON_CLOCK = "[class*=onTheClock], [class*=on-the-clock], [class*=OnTheClock]"
+#: Completed picks on the (hidden) Board grid. Each has .roundPick "R.P",
+#: .playerFirstName, .playerLastName, .playerProTeam, .positionPill.
+DRAFT_BOARD_CELL_DONE = ".draft-board-grid-pick-cell.completedPick"
+DRAFT_BOARD_CELL_ANY = ".draft-board-grid-pick-cell"
 
-#: Countdown timer text.
-DRAFT_TIMER = "[class*=draft-timer], [class*=DraftTimer], [class*=countdown]"
+#: Rows in the (hidden) Pick History tab — the fallback pick reader.
+#: Row text: "1 Puka Nacua Q LAR WR Amon Drugz 310.5 292 4"
+DRAFT_PICK_ROW = ".pick-history .public_fixedDataTable_bodyRow"
 
-#: Rendered when the draft is over.
-DRAFT_COMPLETE = "[class*=draft-complete], [class*=DraftComplete]"
+#: The pick train across the top. Its text carries
+#: "RND 1 OF 13 00:30 ON THE CLOCK: PICK 4 big P PICK 5 AUTO ..."
+DRAFT_PICK_TRAIN = ".pickTrain, .pick-train__content"
+DRAFT_ON_CLOCK = ".pick-component.own-pick, [class*=onTheClock], [class*=on-the-clock]"
 
-#: The player table in the draft room.
-DRAFT_PLAYER_ROW = "table tbody tr, [class*=player-row], [class*=PlayerRow]"
+#: Countdown timer.
+DRAFT_TIMER = ".clock__container, [class*=draft-timer], [class*=countdown]"
 
-#: The "Draft" action button inside a player row.
-DRAFT_BUTTON = (
-    "button:has-text('Draft'), "
-    "[class*=draft-button], "
-    "button[title*='Draft']"
-)
+#: Rendered when the draft is over (unverified — the practice room was
+#: abandoned before the end; the loop also stops on the pick count).
+DRAFT_COMPLETE = "[class*=draft-complete], [class*=DraftComplete], .draft-over"
 
-#: The player-search box in the draft room.
+#: A row of the player table (virtualised).
+DRAFT_PLAYER_ROW = ".draft-players .public_fixedDataTable_bodyRow"
+#: The full player name inside a player-table row.
+DRAFT_PLAYER_NAME = ".playerinfo__playername"
+
+#: The action button in a player row reads QUEUE normally and DRAFT when we
+#: are on the clock. Same element, different text.
+DRAFT_BUTTON = "button:has-text('DRAFT'), button:has-text('Draft'), [class*=draft-button]"
+
+#: The player-search box. Filters on ENTER, not on typing.
 DRAFT_SEARCH = (
+    "input[placeholder='Player Name'], "
     "input[placeholder*='Search'], "
-    "input[type=search], "
-    "[class*=playerSearch] input"
+    "input[type=search]"
 )
+#: The X that clears the search (leaving a search active hides the table).
+DRAFT_SEARCH_CLEAR = ".player--search--clear"
 
 # ── the queue (§3.3 — the load-bearing mechanism) ────────────────────────────
 
 #: Container holding the queued players, in order.
-QUEUE_CONTAINER = (
-    "[class*=queue] [class*=list], "
-    "[class*=Queue] [class*=List], "
-    "[class*=player-queue]"
-)
+QUEUE_CONTAINER = ".pick-queue, [class*=queue] [class*=list], [class*=player-queue]"
 
-#: One row in the queue.
-QUEUE_ROW = f"{QUEUE_CONTAINER} [class*=row], {QUEUE_CONTAINER} li"
+#: One row in the queue. data-drag-id == ESPN player id.
+QUEUE_ROW = ".pick-queue tbody tr[data-drag-id]"
+QUEUE_ROW_ID_ATTR = "data-drag-id"
 
-#: Add-to-queue control inside a player row.
+#: Add-to-queue control inside a PLAYER-TABLE row (text "QUEUE").
 QUEUE_ADD_BUTTON = (
+    "button:has-text('QUEUE'), "
     "button[title*='queue' i], "
-    "button[aria-label*='queue' i], "
-    "[class*=addToQueue]"
+    "button[aria-label*='queue' i]"
 )
 
-#: Remove-from-queue control inside a queue row.
+#: Remove-from-queue control inside a QUEUE row (text "Remove").
 QUEUE_REMOVE_BUTTON = (
-    "button[title*='remove' i], "
-    "button[aria-label*='remove' i], "
-    "[class*=removeFromQueue]"
+    "button.Button--dequeue, "
+    "button:has-text('Remove'), "
+    "button[title*='remove' i]"
 )
+
+#: ESPN plays a full-screen Lottie animation on every pick. While it is up it
+#: intercepts every pointer event — clicks and drags silently do nothing
+#: (found in the first rehearsal: 0/12 queue ops landed in a room where the
+#: auto-teams picked every two seconds). The room injects CSS that hides it.
+PICK_ANIMATION_OVERLAY = ".LottieFullScreenWrapper, .LottieFullScreen"
+ROOM_CSS = (
+    ".LottieFullScreenWrapper, .LottieFullScreen "
+    "{ display: none !important; pointer-events: none !important; }"
+)
+
+#: The Autopick toggle in the queue header. We leave it OFF: on, ESPN drafts
+#: the queue top the instant our turn starts, which removes the chance to
+#: re-rank after the pick before ours.
+QUEUE_AUTOPICK_TOGGLE = ".autoPick-toggle input[type=checkbox]"
 
 # ── team / roster pages ──────────────────────────────────────────────────────
 
@@ -144,6 +181,26 @@ def decode_round_pick(encoded: int, n_teams: int) -> int:
     return (rnd - 1) * n_teams + pick
 
 
+#: "RND 1 OF 13 00:30 ON THE CLOCK: PICK 4 big P PICK 5 AUTO rick ..."
+_ON_CLOCK_RE = re.compile(
+    r"ON THE CLOCK:\s*PICK\s*(?P<pick>\d+)\s*(?P<team>.*?)\s*(?:PICK\s*\d+|ROUND|$)",
+    re.I | re.S,
+)
+_ROUND_RE = re.compile(r"RND\s*(?P<rnd>\d+)\s*OF\s*(?P<of>\d+)", re.I)
+
+
+def parse_pick_train(text: str) -> tuple[int | None, str, int | None]:
+    """(overall pick on the clock, team name on the clock, current round)."""
+    t = " ".join(text.split())
+    m = _ON_CLOCK_RE.search(t)
+    r = _ROUND_RE.search(t)
+    return (
+        int(m.group("pick")) if m else None,
+        (m.group("team").strip() if m else ""),
+        int(r.group("rnd")) if r else None,
+    )
+
+
 def norm(name: str) -> str:
     return (
         name.lower()
@@ -152,6 +209,67 @@ def norm(name: str) -> str:
         .replace("-", " ")
         .strip()
     )
+
+
+def search_player(page, name: str, *, settle_ms: int = 1200) -> bool:
+    """Type a name into the room's search box and apply it (ENTER).
+
+    Verified: typing alone does not filter the virtualised table; ENTER does.
+    Returns whether a box was found.
+    """
+    box = first_present(page, DRAFT_SEARCH)
+    if box is None:
+        return False
+    box.first.fill(name)
+    box.first.press("Enter")
+    page.wait_for_timeout(settle_ms)
+    return True
+
+
+def clear_search(page) -> None:
+    """Clear the search filter. Cheap and bounded: the X is only rendered
+    while the box has text, and a 20 s default click timeout on a hidden X
+    cost the first rehearsal ~20 s per queue op (2026-09-04)."""
+    try:
+        box = first_present(page, DRAFT_SEARCH)
+        if box is None:
+            return
+        if box.first.input_value():
+            x = page.locator(DRAFT_SEARCH_CLEAR)
+            try:
+                if x.count() and x.first.is_visible():
+                    x.first.click(timeout=1_500)
+                    page.wait_for_timeout(300)
+                    return
+            except Exception:
+                pass
+            box.first.fill("")
+            box.first.press("Enter")
+            page.wait_for_timeout(300)
+    except Exception:
+        pass
+
+
+def player_row(page, name: str, *, row_selector: str | None = None):
+    """The player-table row whose NAME cell is `name`.
+
+    Resolved by content, not by index: the table is virtualised and re-renders
+    between a count() and a click(), so an nth(i) locator can land on a
+    different row than the one that was inspected. Returns a locator or None.
+    """
+    rows = page.locator(row_selector or DRAFT_PLAYER_ROW)
+    exact = rows.filter(has=page.locator(DRAFT_PLAYER_NAME, has_text=re.compile(
+        r"^\s*" + re.escape(name) + r"\s*$", re.I)))
+    try:
+        if exact.count():
+            return exact.first
+        loose = rows.filter(has=page.locator(DRAFT_PLAYER_NAME, has_text=re.compile(
+            re.escape(name), re.I)))
+        if loose.count():
+            return loose.first
+    except Exception:
+        return None
+    return None
 
 
 def in_row_with(page, text: str, *button_candidates: str):

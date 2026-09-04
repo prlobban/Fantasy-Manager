@@ -17,31 +17,29 @@ One hour before the draft. Everything about our slot changes then — which pick
 we own, how long the gaps are, who we plan around. `run.preflight` **refuses to
 start** before the lock, on purpose. Do not override it.
 
-## Friday — the Practice Draft (selectors)
+## The rehearsal — a League-Specific Practice Draft
 
-The draft-room selectors are the one untested surface. ESPN's practice room is
-the only place they can be checked before Saturday.
+The selectors were verified against live practice rooms on 2026-09-04 and the
+whole loop has been run end to end in one. Re-run it any time to re-prove the
+room (ESPN can redesign overnight):
 
-1. Click **Practice Draft** on the team page; copy the room's URL from the tab.
-2. Probe the selectors against it:
-   ```
-   python scripts/discover_selectors.py --draft --headed --url "<practice url>"
-   ```
-   Anything `NONE MATCHED` gets re-pointed in `core/browser/selectors.py`, then
-   re-run until every group resolves.
-3. Watch the loop read the room, with no writes:
-   ```
-   python scripts/draft.py --dry-run --url "<practice url>"
-   ```
-   Expect `pick N: <name>` lines as the practice room fills, and `queue sync:
-   N ops` (planned, not executed).
+```
+echo on > ENABLED
+python scripts/draft.py --practice --max-minutes 14
+echo off > ENABLED
+```
 
-Two limits of the practice room, so nothing below reads as a bug:
-- The API does not record practice picks, so the loop reads the **DOM only**,
-  and it attributes each pick to a team by the **real league's** pick order.
-  If the practice room seats us differently, "our turn" will be off. That is
-  fine — the goal is proving the reader and the queue plan, not the pick.
-- `--dry-run` skips the 10:00 order lock and the kill switch on purpose.
+`--practice` opens a practice room itself, at our current league slot, reads
+picks from the **DOM only** (the league's draft record knows nothing about a
+practice room), skips the 10:00 order lock, and otherwise runs exactly the
+Saturday loop: queue sync, click, Slack posts, decision log. The practice
+clock is 30 s per pick, so the whole thing takes ~10 minutes.
+
+Two things about the practice room, so nothing reads as a bug:
+- Other teams are ESPN auto-teams seated at random. Picks are attributed to
+  teams by the **real league's** order, so "room demand" is approximate. Our
+  own slot is exact, which is what matters.
+- Add `--dry-run` to watch without writing (no kill switch needed).
 
 ## Timeline
 
