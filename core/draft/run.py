@@ -93,17 +93,55 @@ def preflight(cfg: DraftConfig) -> tuple[board_mod.Board, RoomModel]:
             "python scripts/build_board.py"
         )
 
+    # 🔴 THE DRAFT ORDER IS RANDOMISED ONE HOUR BEFORE THE DRAFT.
+    # board.load() re-reads mSettings live rather than trusting anything cached,
+    # so pick_order here is whatever ESPN says right now — but "right now" is
+    # only meaningful once the randomisation has happened. Starting the loop
+    # before then would plan the whole draft around a slot we are about to lose.
+    _assert_pick_order_final(bd)
+
     c = client()
     room = RoomModel(facts=bd.facts, my_team_id=c.my_team_id)
+    slot = bd.facts.pick_order.index(c.my_team_id) + 1
     log.info(
         "we are team %s (%s), slot %d of %d, picks %s",
-        c.my_team_id,
-        s.team_name,
-        bd.facts.pick_order.index(c.my_team_id) + 1,
-        len(bd.facts.pick_order),
-        room.my_picks,
+        c.my_team_id, s.team_name, slot, len(bd.facts.pick_order), room.my_picks,
+    )
+    notify(
+        "info",
+        f"Draft slot {slot} of {len(bd.facts.pick_order)}",
+        f"picks: {room.my_picks}\ngaps between our turns: "
+        f"{[b - a for a, b in zip(room.my_picks, room.my_picks[1:], strict=False)]}",
     )
     return bd, room
+
+
+#: ESPN randomises the order this many minutes before the draft (league setting,
+#: confirmed by Pearce 2026-09-03). Anything read earlier is provisional.
+ORDER_LOCK_MINUTES = 60
+
+
+def _assert_pick_order_final(bd) -> None:
+    """Refuse to plan a draft around a pick order that is still going to change."""
+    draft_at = bd.facts.draft_at
+    if draft_at is None:
+        log.warning("no draft time in settings — cannot verify the order is final")
+        return
+
+    from datetime import timedelta
+
+    lock_at = draft_at - timedelta(minutes=ORDER_LOCK_MINUTES)
+    now = datetime.now()
+    if now < lock_at:
+        raise RuntimeError(
+            f"the draft order is randomised at {lock_at:%H:%M} "
+            f"({ORDER_LOCK_MINUTES} min before the {draft_at:%H:%M} draft) and it is "
+            f"only {now:%H:%M}. The current order is provisional — starting now "
+            "would plan every pick around a slot we are about to lose. "
+            "Start the loop after the order locks."
+        )
+    log.info("pick order read at %s, after the %s lock — treating as final",
+             f"{now:%H:%M}", f"{lock_at:%H:%M}")
 
 
 def run(cfg: DraftConfig | None = None) -> DraftStats:

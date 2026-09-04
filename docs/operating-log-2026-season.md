@@ -21,12 +21,19 @@ shipped. Skipping it is how an agent re-proposes work that's already done.
 | Platform | **ESPN** | Pearce, 2026-09-03 |
 | League ID | **1526991210** | Pearce, 2026-09-03 |
 | Team name | **big P** | Pearce, 2026-09-03 |
-| Team ID (ours) | **TBD** — resolve from the name | `mTeam`, once authed |
+| Team ID (ours) | **8** (`big P`) | resolved from `mTeam` |
+| League | **Big Johnson League**, 10 teams | `mSettings` |
 | Season | 2026 | — |
-| Draft | **Sat 2026-09-05, 11:00 CT · SNAKE** | Pearce, 2026-09-03 |
-| Draft slot | **TBD** — often not set until draft day | `mDraftDetail` |
+| Draft | **Sat 2026-09-05, 11:00 CT · SNAKE · 90s per pick** | `draftSettings` |
+| Draft slot | 🔴 **RANDOMISED AT 10:00 CT, one hour before the draft.** Reads as 4 of 10 today; that is **provisional and will change**. Never cache it — `run.preflight` re-reads it and refuses to start before the lock. | Pearce 2026-09-03 · `draftSettings.pickOrder` |
+| Rounds | **13** (9 starters + 4 bench; IR excluded) | `rosterSettings` |
+| Scoring | **HALF PPR** (0.5/rec), 6pt rush/rec TD, **5pt pass TD**, −2 INT | `scoringSettings` |
+| Position caps | QB 2 · RB 4 · WR 6 · TE 3 · K 2 · D/ST 2 | `rosterSettings.positionLimits` |
+| Waivers | **WAIVERS_TRADITIONAL — rolling priority, NOT FAAB.** 24h window, processes every day but Tuesday | `acquisitionSettings` |
+| Trades | enabled, unlimited, deadline **2026-12-02**, 24h revision window, 5 veto votes | `tradeSettings` |
+| Playoffs | 6 of 10 teams, weeks **15–17**, seeding by **TOTAL_POINTS_SCORED** | `scheduleSettings` |
 | Buy-in | **$30** | Pearce, 2026-09-03 |
-| Scoring · roster · team count · waiver type · FAAB budget · trade deadline | **read at run time, never hardcoded** | `mSettings` — `§3.1` |
+| Everything else | **read at run time, never hardcoded** | `mSettings` — `§3.1` |
 | Auth | `SWID` + `espn_s2` cookies | **minted 2026-09-03**, held by Pearce. Destination is `.env` on the box — `§8.6`. Never committed, never in the vault. |
 | Notify target | Slack **#fantasy** `C0BUTMBSZ0W` (Lane One workspace), posting as **Polaris** from the box | Pearce, 2026-09-03 |
 

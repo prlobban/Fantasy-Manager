@@ -107,7 +107,7 @@ def set_lineup(s: EspnSession, league_id: int, team_id: int, season: int,
     page.wait_for_timeout(1200)
 
     applied = 0
-    for espn_id, slot in moves:
+    for espn_id, _slot in moves:
         try:
             row = _row_for_player(page, espn_id)
             if row is None:

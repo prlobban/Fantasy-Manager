@@ -1,0 +1,29 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["overrides"],
+  "properties": {
+    "overrides": {
+      "type": "array",
+      "description": "Bounded news adjustments to the board. Empty is fine if the news is quiet.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["espn_id", "multiplier", "reason", "source"],
+        "properties": {
+          "espn_id": {"type": "integer"},
+          "name": {"type": "string"},
+          "multiplier": {
+            "type": "number",
+            "minimum": 0.85,
+            "maximum": 1.15,
+            "description": "Clamped to +/-15% in code regardless of what is sent."
+          },
+          "reason": {"type": "string"},
+          "source": {"type": "string", "description": "Where the news came from."}
+        }
+      }
+    },
+    "notes": {"type": "array", "items": {"type": "string"}}
+  }
+}

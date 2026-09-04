@@ -29,7 +29,7 @@ log = logging.getLogger(__name__)
 HISTORY_SEASONS = 3
 
 
-def _cache_path(name: str) -> "object":
+def _cache_path(name: str) -> object:
     stamp = dt.date.today().isoformat()
     return settings().cache_dir / f"{name}-{stamp}.parquet"
 

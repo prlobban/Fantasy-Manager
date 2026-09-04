@@ -10,13 +10,12 @@ from __future__ import annotations
 import pytest
 
 from core.gates import kill_switch, write_gate
-from core.model.schema import Action, ActionKind, GauntletResult, GateCheck
+from core.model.schema import Action, ActionKind, GateCheck, GauntletResult
 
 
 @pytest.fixture
 def enabled(tmp_path, monkeypatch):
     """A kill switch that is ON, isolated to this test."""
-    from core import config
 
     p = tmp_path / "ENABLED"
     p.write_text("on\n", encoding="utf-8")

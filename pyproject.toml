@@ -38,8 +38,13 @@ markers = [
 ]
 
 [tool.ruff]
-line-length = 100
+line-length = 105
 target-version = "py312"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B"]
+
+[tool.ruff.lint.per-file-ignores]
+# str+Enum is deliberate: pydantic serialises these to plain strings, which is
+# what the agent's JSON and the decision log need.
+"core/model/schema.py" = ["UP042"]

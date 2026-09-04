@@ -15,6 +15,7 @@ from dataclasses import dataclass
 
 from core.model.schema import Player, Pos, Valuation
 
+
 #: When ESPN gives no ADP spread, assume this much noise (in picks) around ADP.
 #: Real drafts are messier than ADP early and tighter late, so the spread scales
 #: with ADP itself rather than being flat.

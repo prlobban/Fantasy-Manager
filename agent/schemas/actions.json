@@ -1,0 +1,49 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["actions", "summary"],
+  "properties": {
+    "summary": {
+      "type": "string",
+      "description": "One or two sentences: what you decided and why. Terse."
+    },
+    "actions": {
+      "type": "array",
+      "description": "Writes to perform, in order. Empty is a valid, common answer.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["tool", "args", "cites", "reason"],
+        "properties": {
+          "tool": {
+            "type": "string",
+            "enum": ["set_lineup", "add_drop", "reject_trade", "notify"],
+            "description": "Must be one of core's write tools. Nothing else exists."
+          },
+          "args": {"type": "object"},
+          "cites": {
+            "type": "array",
+            "minItems": 1,
+            "items": {"type": "string"},
+            "description": "Playbook sections justifying this action, e.g. ['§4.2']. An action with no citation is rejected."
+          },
+          "reason": {"type": "string"},
+          "confidence": {"type": "number", "minimum": 0, "maximum": 1}
+        }
+      }
+    },
+    "no_action_reason": {
+      "type": "string",
+      "description": "Required when actions is empty. Why nothing should happen today."
+    },
+    "uncertainties": {
+      "type": "array",
+      "items": {"type": "string"},
+      "description": "§8.8 — anything you could not confirm, or where the model disagrees with itself."
+    },
+    "escalate": {
+      "type": "string",
+      "description": "Anything a human must decide. Leave empty if nothing."
+    }
+  }
+}

@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "fantasy": {
+      "command": "python",
+      "args": ["-m", "core.mcp_server"],
+      "env": {}
+    }
+  }
+}

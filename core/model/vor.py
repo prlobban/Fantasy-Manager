@@ -63,7 +63,7 @@ def tiers_for_position(
     current_gaps: list[float] = []
     out[ranked[0][0]] = tier
 
-    for (prev_id, prev_v), (pid, v) in zip(ranked, ranked[1:], strict=False):
+    for (_prev_id, prev_v), (pid, v) in zip(ranked, ranked[1:], strict=False):
         gap = prev_v - v
         # Need at least two gaps inside a tier before a median means anything;
         # until then, keep accumulating rather than breaking on the first step.

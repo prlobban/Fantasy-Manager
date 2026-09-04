@@ -17,9 +17,8 @@ import pytest
 from core.draft import picker
 from core.draft.room import Pick, RoomModel
 from core.espn.settings import LeagueFacts
-from core.model.schema import LeagueSettings, Player, Pos, RosterSlot, Valuation
+from core.model.schema import LeagueSettings, Player, Pos, RosterSlot
 from core.model.value import value_pool
-
 
 # ── a synthetic league that matches Pearce's real one ────────────────────────
 
