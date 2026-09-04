@@ -34,6 +34,7 @@ MCP_CONFIG = REPO_ROOT / "agent" / "mcp.json"
 PLAYBOOK = REPO_ROOT / "docs" / "fantasy-playbook.md"
 PRIORS = REPO_ROOT / "priors.yaml"
 
+
 @dataclass(frozen=True)
 class TaskSpec:
     """One agent task and the capability surface it gets.
@@ -206,7 +207,14 @@ def _usage(raw: str) -> dict | None:
 
 
 def run(task: str, packet: dict, *, dry_run: bool = False,
-        timeout: int = 600) -> AgentResult:
+        timeout: int = 600, proc_box: dict | None = None) -> AgentResult:
+    """Invoke one agent task.
+
+    `proc_box` is how the judge stays killable: pass a dict and the live
+    Popen lands in it as `proc_box["proc"]`, so a watcher thread can end the
+    run the instant we are on the clock (§3.10). Without it this is an
+    ordinary blocking call.
+    """
     if task not in TASKS:
         raise ValueError(f"unknown task {task!r}; expected one of {sorted(TASKS)}")
 
@@ -261,15 +269,32 @@ def run(task: str, packet: dict, *, dry_run: bool = False,
 
     log.info("invoking claude for task %r (%d chars of packet)", task, len(user_msg))
     try:
-        proc = subprocess.run(
-            cmd, capture_output=True, text=True, timeout=timeout, cwd=str(REPO_ROOT)
-        )
-    except subprocess.TimeoutExpired:
-        return AgentResult(False, task, None, "", error=f"claude timed out after {timeout}s")
+        with subprocess.Popen(
+            cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+            cwd=str(REPO_ROOT),
+        ) as proc:
+            if proc_box is not None:
+                proc_box["proc"] = proc
+            try:
+                stdout, stderr = proc.communicate(timeout=timeout)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                proc.communicate()
+                return AgentResult(False, task, None, "",
+                                   error=f"claude timed out after {timeout}s")
+    except OSError as e:
+        # The box shipped a Windows claude.exe for months; this is what that
+        # looks like from here, and it must not read as a model failure.
+        return AgentResult(False, task, None, "",
+                           error=f"could not run {cfg.claude_bin!r}: {e}")
 
-    raw = proc.stdout or ""
+    if proc.returncode is not None and proc.returncode < 0:
+        return AgentResult(False, task, None, stdout or "",
+                           error=f"killed (signal {-proc.returncode})")
+
+    raw = stdout or ""
     transcript = run_dir / f"{stamp}-{task}.json"
-    transcript.write_text(raw + ("\n--- stderr ---\n" + proc.stderr if proc.stderr else ""),
+    transcript.write_text(raw + ("\n--- stderr ---\n" + stderr if stderr else ""),
                           encoding="utf-8")
 
     # Usage is read before any early return: a run that failed still spent the
@@ -288,7 +313,7 @@ def run(task: str, packet: dict, *, dry_run: bool = False,
 
     if proc.returncode != 0:
         return AgentResult(False, task, None, raw,
-                           error=f"claude exited {proc.returncode}: {proc.stderr[:300]}",
+                           error=f"claude exited {proc.returncode}: {(stderr or '')[:300]}",
                            transcript=transcript, usage=usage)
 
     payload = _extract(raw)

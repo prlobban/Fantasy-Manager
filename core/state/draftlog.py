@@ -213,6 +213,35 @@ class DraftLog:
                    tier=tier, runner_up=runner_up, runner_up_vor=runner_up_vor,
                    how=how, receipt=receipt)
 
+    def judge(self, verdict, *, overall: int, mode: str, changed: bool,
+              before: str | None, after: str | None) -> None:
+        """§3.10 — what the judge said, whether it was applied, and what it cost.
+
+        Recorded whether the mode is shadow or live, because the shadow record
+        is the evidence for granting it live: a judge that would have changed
+        nothing for 13 picks has not earned the wheel.
+        """
+        head = f"**Judge ({mode})** · {verdict.describe()}"
+        if changed:
+            head += f" · would take **{after}** over {before}"
+        body = head + "\n\n> " + verdict.summary
+        if verdict.rejected:
+            body += "\n>\n> ⚠️ refused: " + "; ".join(verdict.rejected)
+        self.md(body)
+        self.event(
+            "judge", overall=overall, mode=mode, agree=verdict.agree,
+            changed=changed, before=before, after=after,
+            summary=verdict.summary,
+            vetoes=[{"espn_id": lv.espn_id, "name": lv.name, "reason": lv.reason,
+                     "cites": lv.cites, "dossier_fact": lv.dossier_fact}
+                    for lv in verdict.vetoes],
+            reorders=[{"espn_id": lv.espn_id, "name": lv.name,
+                       "above": lv.above_espn_id, "reason": lv.reason,
+                       "cites": lv.cites, "dossier_fact": lv.dossier_fact}
+                      for lv in verdict.reorders],
+            rejected=verdict.rejected, flags=verdict.flags,
+        )
+
     def problem(self, what: str, detail: str) -> None:
         self.md(f"> ⚠️ **{what}** — {detail}")
         self.event("problem", what=what, detail=detail)

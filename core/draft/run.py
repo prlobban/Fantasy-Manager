@@ -32,7 +32,9 @@ from datetime import UTC, datetime
 from core.browser.session import EspnSession
 from core.config import settings
 from core.draft import board as board_mod
+from core.draft import clock as clock_mod
 from core.draft import picker
+from core.draft import verdict as vmod
 from core.draft.queue import QueueSync
 from core.draft.reader import ApiReader, DomReader, FallbackReader
 from core.draft.room import RoomModel
@@ -60,6 +62,10 @@ class DraftConfig:
     #: A League-Specific Practice Draft: skip the 10:00 order lock (the room
     #: seats us at the slot we chose) and read picks from the DOM only.
     practice: bool = False
+    #: §3.10 — "off": ignore the judge entirely. "shadow": read its verdict,
+    #: log and post what it WOULD have changed, then draft the maths anyway.
+    #: "live": apply its levers. Shadow is how a judge earns live.
+    judge: str = "off"
 
 
 @dataclass
@@ -228,11 +234,16 @@ def run(cfg: DraftConfig | None = None) -> DraftStats:
         _READER = reader
 
         notify("info", "Draft loop started" + (" (DRY RUN)" if cfg.dry_run else ""),
-               f"{bd.facts.settings.name} · our picks {room.my_picks}")
+               f"{bd.facts.settings.name} · our picks {room.my_picks}"
+               + (f" · judge {cfg.judge}" if cfg.judge != "off" else ""))
 
         deadline = time.monotonic() + cfg.max_minutes * 60
         last_plan = None
         me = settings().team_name.strip().casefold()
+
+        # §3.10 — the seam to the judge process, and per-round Slack threading.
+        pace = clock_mod.Pace()
+        threads = _RoundThreads(dlog.dir)
 
         def dom_says_our_turn() -> bool:
             # The room model lags the DOM by a cycle; the pick train knows
@@ -256,6 +267,15 @@ def run(cfg: DraftConfig | None = None) -> DraftStats:
                 log.info("pick %d: %s (%s) by team %s", pk.overall, pk.name,
                          pk.pos.value if pk.pos else "?", pk.team_id)
                 dlog.room_pick(pk, ours=pk.team_id == room.my_team_id, best_now=None)
+                # Every pick is a datapoint about how fast this room actually
+                # moves, which is what the judge's budget is derived from.
+                pace.saw()
+                if pk.team_id != room.my_team_id:
+                    rnd = (pk.overall - 1) // room.n_teams + 1
+                    notify("info",
+                           f"#{pk.overall} team {pk.team_id} — {pk.name} "
+                           f"({pk.pos.value if pk.pos else '?'})",
+                           thread_ts=threads.for_round(rnd, room))
             return fresh
 
         #: overall pick number -> (attempts, monotonic time of the last one).
@@ -291,6 +311,12 @@ def run(cfg: DraftConfig | None = None) -> DraftStats:
                 # edits cannot land. The queue was synced on the cycles before;
                 # the click below goes for the true #1 regardless.
                 our_turn = room.on_the_clock_is_us or dom_says_our_turn()
+
+                # §3.10/§10.2 — the ONLY thing the loop does for the judge:
+                # write a small file. It never reads a model, never waits, and
+                # the judge process decides for itself whether it has room.
+                clock_mod.write(dlog.dir, room=room, our_turn=our_turn, pace=pace)
+
                 if qsync and not our_turn and not cfg.dry_run and qsync.ensure_autopick_off():
                     notify("warn", "ESPN had switched us to Autopick — turned it off",
                            "This happens after a missed pick. The queue covered it.")
@@ -321,6 +347,29 @@ def run(cfg: DraftConfig | None = None) -> DraftStats:
                         if qsync:
                             qsync.reset_attempts()
                     overall = room.next_overall
+
+                    # §3.10 — the judge's only point of contact with a pick.
+                    # A file read: present or absent, fresh or stale, valid or
+                    # refused. There is no waiting and no fallback to a model.
+                    judged_plan, shadow_diff, verdict = last_plan, None, None
+                    if cfg.judge != "off":
+                        verdict = vmod.read(dlog.dir, overall, plan=last_plan)
+                        if verdict is not None:
+                            with_judge = vmod.apply(last_plan, verdict)
+                            before = last_plan.best.player.name if last_plan.best else None
+                            after = with_judge.best.player.name if with_judge.best else None
+                            changed = before != after
+                            if cfg.judge == "live":
+                                judged_plan = with_judge
+                            elif changed:
+                                shadow_diff = (f"would have taken {after} over "
+                                               f"{before} ({verdict.describe()})")
+                            dlog.judge(verdict, overall=overall, mode=cfg.judge,
+                                       changed=changed, before=before, after=after)
+                            if shadow_diff:
+                                notify("info", f"👁 Shadow · pick {overall}", shadow_diff)
+                    last_plan = judged_plan
+
                     n_tries, last_at = attempted.get(overall, (0, 0.0))
                     if last_plan.best and (n_tries == 0 or (
                         n_tries < PICK_MAX_ATTEMPTS
@@ -331,8 +380,11 @@ def run(cfg: DraftConfig | None = None) -> DraftStats:
                             # The whole board state and every adjustment term,
                             # written BEFORE the click so it survives a failure.
                             dlog.our_turn(last_plan, room, overall=overall)
-                        counted = _make_pick(session, cfg, room, last_plan, stats,
-                                             dlog, retry=n_tries > 0)
+                        counted = _make_pick(
+                            session, cfg, room, last_plan, stats, dlog,
+                            retry=n_tries > 0,
+                            judge_ctx={"verdict": verdict,
+                                       "shadow_diff": shadow_diff})
                         if not counted:
                             # The target was gone anyway: not an attempt. Go
                             # again next cycle rather than after the retry wait.
@@ -394,9 +446,16 @@ def _reread(room: RoomModel) -> list:
 
 
 def _make_pick(session, cfg: DraftConfig, room: RoomModel, plan, stats: DraftStats,
-               dlog: DraftLog, *, retry: bool = False) -> bool:
+               dlog: DraftLog, *, retry: bool = False,
+               judge_ctx: dict | None = None) -> bool:
     """Try to draft plan.best. Returns False only when the target turned out
-    to be already drafted — a stale plan, not a failed attempt."""
+    to be already drafted — a stale plan, not a failed attempt.
+
+    `judge_ctx` carries the verdict (if any) purely so the Slack post can show
+    the reasoning. It never changes the pick: by the time this is called the
+    plan already is or is not the judged one, decided in the loop.
+    """
+    judge_ctx = judge_ctx or {}
     best = plan.best
     runner_up = plan.candidates[1] if len(plan.candidates) > 1 else None
 
@@ -463,11 +522,12 @@ def _make_pick(session, cfg: DraftConfig, room: RoomModel, plan, stats: DraftSta
                 runner_up_vor=runner_up.valuation.vor if runner_up else None,
                 how="clicked" + (" (retry)" if retry else ""), receipt=str(receipt),
             )
-            notify("action", f"Pick {room.next_overall}: {best.player.name}"
-                   + (" (retry)" if retry else ""),
-                   f"{best.player.pos.value} · VOR {best.valuation.vor:.1f} · "
-                   f"tier {best.valuation.tier}\npassed on: "
-                   f"{runner_up.player.name if runner_up else '—'}")
+            title, body = _pick_post(
+                plan, best, overall=room.next_overall,
+                how="clicked" + (" (retry)" if retry else ""), room=room,
+                verdict=judge_ctx.get("verdict"),
+                shadow_diff=judge_ctx.get("shadow_diff"))
+            notify("action", title, body)
         elif gate.allowed:
             # dry-run: gate passed, nothing was clicked
             log.info("DRY RUN pick %d would be %s", room.next_overall, best.player.name)
@@ -640,3 +700,74 @@ def _postflight(bd, room: RoomModel, stats: DraftStats, dlog: DraftLog) -> None:
                "errors": stats.errors,
                "at": datetime.now(UTC).isoformat()},
     )
+
+
+class _RoundThreads:
+    """§3.8 — Slack that stays readable through 130 picks.
+
+    A draft produces 110+ opponent picks. Posting each one top-level makes the
+    channel scroll faster than anyone can read, and the messages that matter —
+    our picks, the judge, an autopick flip — get buried in it. So each round
+    opens one top-level header whose timestamp becomes the thread, and every
+    opponent pick and queue rewrite in that round is a reply inside it.
+
+    Our own picks stay top-level. They are the reason the channel exists.
+    """
+
+    def __init__(self, draft_dir) -> None:
+        self._ts: dict[int, str | None] = {}
+        self._dir = draft_dir
+
+    def for_round(self, rnd: int, room) -> str | None:
+        if rnd in self._ts:
+            return self._ts[rnd]
+        n = room.n_teams
+        first, last = (rnd - 1) * n + 1, rnd * n
+        mine = [p for p in room.my_picks if first <= p <= last]
+        ts = notify(
+            "info", f"Round {rnd}",
+            f"picks {first}–{last}" + (f" · we pick at {mine[0]}" if mine else ""),
+        )
+        self._ts[rnd] = ts
+        return ts
+
+
+def _pick_post(plan, chosen, *, overall: int, how: str, room,
+               verdict=None, shadow_diff: str | None = None) -> tuple[str, str]:
+    """The message for one of OUR picks: the decision and the reasoning.
+
+    Everything here was already computed to make the pick — this is §7.1's
+    "log the prediction" rendered for a phone. Nothing is recomputed and no
+    model is asked; if the reasoning is not in the plan, it does not exist.
+    """
+    val = chosen.valuation
+    runner = plan.candidates[1] if len(plan.candidates) > 1 else None
+
+    title = (f"Pick {overall} (R{plan.round_num}) — {chosen.player.name} "
+             f"({chosen.player.pos.value}) · VOR {val.vor:.1f} · tier {val.tier} "
+             f"· {how}")
+
+    lines = []
+    if runner:
+        lines.append(f"Passed on: {runner.player.name} "
+                     f"({runner.player.pos.value}, VOR {runner.valuation.vor:.1f})")
+
+    costs = sorted(plan.outlooks.items(), key=lambda kv: -kv[1].cost)[:4]
+    lines.append("Cost of waiting   "
+                 + " · ".join(f"{pos.value} {o.cost:.0f}" for pos, o in costs))
+
+    lines.append("Top 3")
+    for i, c in enumerate(plan.top(3), 1):
+        adj = " ".join(f"{k} {v:+.0f}" for k, v in c.reasons.items() if k != "base")
+        lines.append(f"  {i}. {c.player.name} ({c.player.pos.value}) "
+                     f"{c.score:.0f}" + (f"  [{adj}]" if adj else ""))
+
+    have = {p.value: n for p, n in room.my_positions.items()}
+    lines.append(f"Roster            {have or '{}'}")
+
+    if verdict is not None:
+        lines.append(f"Judge             {verdict.describe()} — {verdict.summary}"[:600])
+    if shadow_diff:
+        lines.append(f"Shadow            {shadow_diff}")
+
+    return title, "\n".join(lines)

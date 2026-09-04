@@ -66,6 +66,84 @@ def dossier_packet(player, val, *, adp: float | None = None) -> dict[str, Any]:
     }
 
 
+def judge_packet(plan, room, *, for_overall: int, budget_s: float,
+                 dossiers: dict, board_by_id: dict, recent_picks: list) -> dict[str, Any]:
+    """§3.10 — one pick's worth of context for the judge.
+
+    Carries `core`'s ranking with every adjustment named, each candidate's
+    survival odds, and the dossier for each. The levers are stated in the
+    packet as well as the prompt so the model cannot claim not to know them,
+    and `dossier: null` is sent explicitly — an unknown player must read as
+    unknown, not as absent.
+    """
+    from core.draft.survival import p_survives
+
+    n = int(priors().get("judge.candidates"))
+    picks_until = plan.picks_until_next
+
+    cands = []
+    for i, c in enumerate(plan.top(n), 1):
+        pid = c.player.espn_id
+        d = dossiers.get(pid)
+        cands.append({
+            "rank": i,
+            **_player_row(c.player, c.valuation),
+            "adp": c.player.espn_adp,
+            "score": round(c.score, 2),
+            "adjustments": {k: round(v, 2) for k, v in c.reasons.items()},
+            "note": c.note,
+            "p_survives_to_our_next_pick": round(
+                p_survives(c.player.espn_adp, c.player.adp_stdev, picks_until), 3),
+            "dossier": ({
+                "durability": d.durability,
+                "role": d.role,
+                "news_since": d.news_since,
+                "projection_check": d.projection_check,
+                "multiplier_applied": d.multiplier,
+                "confidence": d.confidence,
+                "sources": d.sources,
+                "demoted_claims": d.demotions,
+            } if d else None),
+        })
+
+    have = {p.value: n_ for p, n_ in room.my_positions.items()}
+    return {
+        "task": "judge",
+        "for_overall": for_overall,
+        "round": plan.round_num,
+        "picks_until_our_next_turn": picks_until,
+        "budget_seconds": round(budget_s),
+        "levers": {
+            "veto": True,
+            "reorder_within_tier": True,
+            "promote_across_tiers": False,
+            "max_vetoes": int(priors().get("judge.max_vetoes_per_turn")),
+            "max_reorders": int(priors().get("judge.max_reorders_per_turn")),
+        },
+        "our_roster": have,
+        "run_on": plan.run_on.value if plan.run_on else None,
+        "position_outlooks": {
+            pos.value: {
+                "cost_of_waiting": round(o.cost, 2),
+                "best_now": round(o.best_now, 2),
+                "expected_next": round(o.expected_next, 2),
+                "top_tier": o.top_tier,
+                "top_tier_remaining": o.top_tier_remaining,
+            }
+            for pos, o in plan.outlooks.items()
+        },
+        "candidates": cands,
+        "last_picks_in_the_room": [
+            {"overall": pk.overall, "name": pk.name,
+             "pos": pk.pos.value if pk.pos else None}
+            for pk in recent_picks[-5:]
+        ],
+        "dossier_coverage": (
+            f"{sum(1 for c in cands if c['dossier'])}/{len(cands)} candidates "
+            "have a dossier"),
+    }
+
+
 def build(task: str, state: ls_mod.LeagueState | None = None,
           *, scope: str = "all") -> dict[str, Any]:
     """`scope` narrows a daily run: "lineup" (the Sunday pass) omits the

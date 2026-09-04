@@ -1,0 +1,74 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["for_overall", "agree", "summary"],
+  "properties": {
+    "for_overall": {
+      "type": "integer",
+      "description": "The overall pick number this verdict is for. Copied from the packet. A verdict for the wrong pick is ignored."
+    },
+    "agree": {
+      "type": "boolean",
+      "description": "True when the dossiers do not contradict the board. This is the expected answer."
+    },
+    "veto": {
+      "type": "array",
+      "maxItems": 2,
+      "description": "Candidates that must not be taken this pick. Each needs a dossier fact and a section citation.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["espn_id", "name", "reason", "cites", "dossier_fact"],
+        "properties": {
+          "espn_id": {"type": "integer"},
+          "name": {"type": "string"},
+          "reason": {"type": "string", "maxLength": 400},
+          "cites": {
+            "type": "array",
+            "minItems": 1,
+            "items": {"type": "string"},
+            "description": "Playbook sections, e.g. \"§3.7\". An uncited lever is refused."
+          },
+          "dossier_fact": {
+            "type": "string",
+            "maxLength": 400,
+            "description": "The specific line from this player's dossier that justifies it. Not your own knowledge."
+          }
+        }
+      }
+    },
+    "reorder": {
+      "type": "array",
+      "maxItems": 2,
+      "description": "Move espn_id directly above above_espn_id. Both must be in the same tier and both in the candidate list.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["espn_id", "name", "above_espn_id", "reason", "cites", "dossier_fact"],
+        "properties": {
+          "espn_id": {"type": "integer"},
+          "name": {"type": "string"},
+          "above_espn_id": {"type": "integer"},
+          "reason": {"type": "string", "maxLength": 400},
+          "cites": {
+            "type": "array",
+            "minItems": 1,
+            "items": {"type": "string"}
+          },
+          "dossier_fact": {"type": "string", "maxLength": 400}
+        }
+      }
+    },
+    "summary": {
+      "type": "string",
+      "maxLength": 700,
+      "description": "Two or three sentences for Slack: what the board says, what the dossiers add, what you changed."
+    },
+    "flags": {
+      "type": "array",
+      "maxItems": 5,
+      "items": {"type": "string", "maxLength": 300},
+      "description": "Anything worth a human's attention that is not a lever — a gap in the dossiers, a candidate you could not assess."
+    }
+  }
+}
