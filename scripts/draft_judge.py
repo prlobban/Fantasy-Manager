@@ -187,6 +187,14 @@ def main() -> int:
                  overall, plan.round_num, budget, tick.picks_until_our_turn,
                  tick.pace_s)
 
+        # §3.10 — the one exception to "all research before 11:00". A position
+        # run can push the board deeper than the pool we researched, and a
+        # top-3 candidate we know nothing about is exactly where a dossier is
+        # worth most. One player, one lookup, hard timeout, and only with slack
+        # to spare: everything else still comes off disk.
+        spent = _fill_missing_dossier(plan, ds, budget)
+        budget -= spent
+
         packet = judge_packet(plan, room, for_overall=overall, budget_s=budget,
                               dossiers=ds, board_by_id=bd.by_id,
                               recent_picks=room.picks)
@@ -218,6 +226,52 @@ def main() -> int:
             break
 
     return 0
+
+
+#: Only reach for a live lookup with this much budget in hand: the search is
+#: capped at LIVE_LOOKUP_TIMEOUT_S and the judge still has to think afterwards.
+LIVE_LOOKUP_MIN_BUDGET_S = 150.0
+LIVE_LOOKUP_TIMEOUT_S = 60
+
+
+def _fill_missing_dossier(plan, ds: dict, budget_s: float) -> float:
+    """Research ONE undossiered top-3 candidate. Returns seconds spent.
+
+    Deliberately narrow. This is the only web access inside a draft, so it is
+    gated three ways — top three only, one player, and only when the budget can
+    absorb a full timeout and still leave the judge room to answer. It never
+    raises: failing to research is the normal case, not an error.
+    """
+    if budget_s < LIVE_LOOKUP_MIN_BUDGET_S:
+        return 0.0
+    missing = [c for c in plan.top(3) if c.player.espn_id not in ds]
+    if not missing:
+        return 0.0
+
+    c = missing[0]
+    log.info("no dossier for %s (top 3) — one live lookup, %ds cap",
+             c.player.name, LIVE_LOOKUP_TIMEOUT_S)
+    t0 = time.monotonic()
+    try:
+        from agent.packet import dossier_packet
+
+        res = agent_run.run("dossier", dossier_packet(c.player, c.valuation),
+                            timeout=LIVE_LOOKUP_TIMEOUT_S)
+        if res.ok and res.output:
+            out = dict(res.output)
+            out.setdefault("espn_id", c.player.espn_id)
+            out.setdefault("name", c.player.name)
+            dmod.write(c.player.espn_id, out)
+            d = dmod.load_one(c.player.espn_id)
+            if d is not None:
+                ds[c.player.espn_id] = d
+                log.info("live dossier for %s: %s", c.player.name, d.summary())
+        else:
+            log.info("live lookup for %s produced nothing: %s",
+                     c.player.name, res.error)
+    except Exception as e:
+        log.warning("live lookup for %s failed: %s", c.player.name, e)
+    return time.monotonic() - t0
 
 
 def _picks_from_log(draft_dir: Path) -> list:

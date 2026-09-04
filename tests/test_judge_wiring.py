@@ -165,3 +165,57 @@ def test_no_plan_is_not_a_crash(tmp_path):
     out, verdict, diff = consult_judge(None, mode="live", draft_dir=tmp_path,
                                        overall=17)
     assert out is None and verdict is None and diff is None
+
+
+# ── a judged draft must still be a legal draft ───────────────────────────────
+
+def test_a_vetoing_judge_never_produces_an_illegal_roster():
+    """§3.7 — the judge removes candidates; roster legality is core's and has
+    to survive that. A veto that emptied a position, or walked us past a cap,
+    would be a lever reaching further than it was granted.
+
+    The judge here is far more aggressive than the caps allow in practice: it
+    vetoes the top candidate on every single turn.
+    """
+    import random
+
+    from core.draft import picker
+    from core.draft import verdict as V
+    from core.draft.room import Pick, RoomModel
+    from core.model.value import value_pool
+    from tests.test_draft_sim import make_facts, make_pool
+
+    facts = make_facts(teams=10)
+    pool = make_pool(random.Random(3))
+    vals = value_pool(pool, facts.settings, window="ros")
+    rows = [(p, vals[p.espn_id]) for p in pool if p.espn_id in vals]
+    rows.sort(key=lambda pv: pv[1].vor, reverse=True)
+
+    me = facts.pick_order[0]
+    room = RoomModel(facts=facts, my_team_id=me)
+    caps = facts.position_limits
+
+    taken: set[int] = set()
+    for overall in range(1, 40):
+        plan = picker.rank(rows, room)
+        if plan.best is None:
+            break
+        top = plan.top(1)
+        raw = {"for_overall": overall, "agree": False, "summary": "s",
+               "veto": [{"espn_id": top[0].player.espn_id,
+                         "name": top[0].player.name, "reason": "r",
+                         "cites": ["§2.5"], "dossier_fact": "f"}]}
+        v = V.parse(raw, plan=plan, for_overall=overall)
+        judged = V.apply(plan, v)
+        assert judged.best is not None, "a veto emptied the board"
+
+        chosen = judged.best.player
+        assert chosen.espn_id not in taken, "drafted the same player twice"
+        taken.add(chosen.espn_id)
+        room.apply([Pick(overall=overall, team_id=room.team_on_clock(overall),
+                         espn_id=chosen.espn_id, pos=chosen.pos,
+                         name=chosen.name)])
+
+    # §3.7 — our roster obeys ESPN's position caps despite the vetoing.
+    for pos, n in room.my_positions.items():
+        assert n <= caps.get(pos, 99), f"{pos.value}: {n} over cap {caps.get(pos)}"
