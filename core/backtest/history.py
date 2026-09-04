@@ -313,8 +313,10 @@ def load(year: int, *, cfg: Settings | None = None, weeks: int = MAX_WEEK,
 
     log.info("season %d: %d players, %d picks, %d with a real ADP",
              year, len(players), len(picks), sum(1 for p in players if p.espn_adp))
-    return Season(year=year, facts=facts, players=players, picks=picks,
-                  raw_weekly=raw_weekly, raw_projection=raw_projection)
+    season = Season(year=year, facts=facts, players=players, picks=picks,
+                    raw_weekly=raw_weekly, raw_projection=raw_projection)
+    attach_byes(season)
+    return season
 
 
 def _load_facts(year: int, d: Path, cfg: Settings | None) -> LeagueFacts:
@@ -325,6 +327,56 @@ def _load_facts(year: int, d: Path, cfg: Settings | None) -> LeagueFacts:
     written by an older version of it. The call is one request.
     """
     return load_settings(_client_for(year, cfg))
+
+
+#: A week whose row count is at or below this share of the team's median week is
+#: that team's bye. Byes are unmistakable in the data — the real minimum sits far
+#: below a third of median — so the threshold is a sanity bound, not a tuning knob.
+_BYE_SHARE = 0.34
+
+
+def attach_byes(season: Season) -> int:
+    """Derive each player's bye week from the weekly pulls. Returns players set.
+
+    ESPN does not hand back a past season's bye schedule, so it is recovered
+    from the data: in its bye week a team's players almost all have no stat row
+    at all. Taking the week with the fewest rows (rather than demanding zero)
+    handles the seven 2025 teams that still emit a row for a D/ST or kicker.
+    Detects all 32 teams in both 2024 and 2025.
+
+    **This matters more than it looks.** Without byes the engine's bye-stacking
+    logic is inert while the scorer still gives a player on bye zero points —
+    the harness quietly handicaps the engine against a bot that has no bye logic
+    to disable. Found by the autopick benchmark, 2026-09-04.
+    """
+    import statistics
+    from collections import defaultdict
+
+    rows: dict[str, dict[int, int]] = defaultdict(lambda: defaultdict(int))
+    for p in season.players:
+        if p.pro_team in ("FA", ""):
+            continue
+        for wk in p.actual_week:
+            rows[p.pro_team][wk] += 1
+
+    window = range(4, 15)          # byes never fall outside this in the modern NFL
+    byes: dict[str, int] = {}
+    for team, weeks in rows.items():
+        counts = {w: weeks.get(w, 0) for w in window}
+        median = statistics.median(counts.values())
+        low = min(counts, key=lambda w: counts[w])
+        if median > 0 and counts[low] <= _BYE_SHARE * median:
+            byes[team] = low
+
+    n = 0
+    for p in season.players:
+        bye = byes.get(p.pro_team)
+        if bye:
+            p.bye_week = bye
+            n += 1
+    log.info("season %d: byes for %d/%d teams, %d players",
+             season.year, len(byes), len(rows), n)
+    return n
 
 
 def positions_drafted(season: Season) -> dict[Pos, int]:

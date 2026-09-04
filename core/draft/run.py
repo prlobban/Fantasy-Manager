@@ -717,43 +717,24 @@ class _RoundThreads:
 
 def _pick_post(plan, chosen, *, overall: int, how: str, room,
                verdict=None, shadow_diff: str | None = None) -> tuple[str, str]:
-    """The message for one of OUR picks: the decision and the reasoning.
+    """The message for one of OUR picks: WHO we took, and little else.
 
-    Everything here was already computed to make the pick — this is §7.1's
-    "log the prediction" rendered for a phone. Nothing is recomputed and no
-    model is asked; if the reasoning is not in the plan, it does not exist.
+    Trimmed to this on Pearce's instruction, 2026-09-04 — "just include what
+    picks are being made for us, that's really all I want to see." The
+    cost-of-waiting table, the scored top 3 and the per-term adjustments no
+    longer go to Slack. They are still written in full to `events.jsonl` and
+    the decision log, which is where §7.1 grades them afterwards: Slack is the
+    live feed, not the audit trail.
+
+    `verdict` and `shadow_diff` are still accepted so the caller does not need
+    to change, and are deliberately not rendered — the judge posts its own
+    messages from its own process.
     """
     val = chosen.valuation
-    runner = plan.candidates[1] if len(plan.candidates) > 1 else None
-
     title = (f"Pick {overall} (R{plan.round_num}) — {chosen.player.name} "
-             f"({chosen.player.pos.value}) · VOR {val.vor:.1f} · tier {val.tier} "
-             f"· {how}")
-
-    lines = []
-    if runner:
-        lines.append(f"Passed on: {runner.player.name} "
-                     f"({runner.player.pos.value}, VOR {runner.valuation.vor:.1f})")
-
-    costs = sorted(plan.outlooks.items(), key=lambda kv: -kv[1].cost)[:4]
-    lines.append("Cost of waiting   "
-                 + " · ".join(f"{pos.value} {o.cost:.0f}" for pos, o in costs))
-
-    lines.append("Top 3")
-    for i, c in enumerate(plan.top(3), 1):
-        adj = " ".join(f"{k} {v:+.0f}" for k, v in c.reasons.items() if k != "base")
-        lines.append(f"  {i}. {c.player.name} ({c.player.pos.value}) "
-                     f"{c.score:.0f}" + (f"  [{adj}]" if adj else ""))
-
+             f"({chosen.player.pos.value})")
     have = {p.value: n for p, n in room.my_positions.items()}
-    lines.append(f"Roster            {have or '{}'}")
-
-    if verdict is not None:
-        lines.append(f"Judge             {verdict.describe()} — {verdict.summary}"[:600])
-    if shadow_diff:
-        lines.append(f"Shadow            {shadow_diff}")
-
-    return title, "\n".join(lines)
+    return title, f"{how} · VOR {val.vor:.1f} · roster {have or '{}'}"
 
 
 def consult_judge(plan, *, mode: str, draft_dir, overall: int, dlog=None):

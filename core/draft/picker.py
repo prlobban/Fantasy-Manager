@@ -131,6 +131,7 @@ def rank(
     w_demand_cap = float(p.get("draft.room_demand_cap"))
     w_run_join = float(p.get("draft.run_join_weight"))
     w_run_wait = float(p.get("draft.run_wait_weight"))
+    bye_weight = float(p.get("draft.bye_collision_weight"))
     hole_weight = float(p.get("draft.hole_weight"))
     stack_penalty = float(p.get("draft.stack_penalty"))
     bench_cost = float(p.get("draft.bench_opportunity_cost"))
@@ -293,11 +294,23 @@ def rank(
             reasons["fills_hole"] = bump
 
         # §3.7 — bye collision among starters.
+        #
+        # Two bugs lived here until the autopick benchmark supplied real bye
+        # weeks and made this branch fire for the first time (2026-09-04):
+        #
+        # 1. `score -= w * val.vor` on a NEGATIVE vor ADDS to the score, so a
+        #    bye collision was a *bonus* for a below-replacement player. Same
+        #    shape as the surplus bug noted above; `max(vor, 0)` is the fix.
+        # 2. The size was wrong by roughly a factor of four. A collision costs
+        #    one week of the GAP between this player and the bench body who
+        #    covers him, not 8% of his season. With the weight swept against
+        #    two seasons the evidence put it near 0.02.
         if player.bye_week and player.bye_week in my_byes.get(player.pos, set()):
             starters = room.facts.settings.starters_at(player.pos)
             if my_pos.get(player.pos, 0) < starters:
-                score -= 0.08 * val.vor
-                reasons["bye_collision"] = -0.08 * val.vor
+                pen = -bye_weight * max(val.vor, 0.0)
+                score += pen
+                reasons["bye_collision"] = pen
                 notes.append(f"bye {player.bye_week} collision")
 
         # §3.7 — late rounds are for upside, but bench depth is a hard budget.

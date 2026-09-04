@@ -70,8 +70,13 @@ def _season(teams: int = 4, scoring: dict | None = None) -> Season:
     raw: dict[int, dict[int, dict[int, float]]] = {}
 
     pid = 1
-    for pos, n, top in ((Pos.QB, 16, 300.0), (Pos.RB, 40, 280.0), (Pos.WR, 40, 260.0),
-                        (Pos.TE, 16, 200.0), (Pos.K, 12, 130.0), (Pos.DST, 12, 130.0)):
+    # Sized off `teams` so the same fixture serves the 4-team replay tests and
+    # the 10-team arena: DRAFT_SHAPE consumes up to 4 players at a position per
+    # team, so a fixed pool silently runs dry as soon as the league grows.
+    t = teams
+    for pos, n, top in ((Pos.QB, 4 * t, 300.0), (Pos.RB, 8 * t, 280.0),
+                        (Pos.WR, 8 * t, 260.0), (Pos.TE, 4 * t, 200.0),
+                        (Pos.K, 3 * t, 130.0), (Pos.DST, 3 * t, 130.0)):
         for i in range(n):
             p = Player(espn_id=pid, name=f"{pos.value}{i}", pos=pos, pro_team="FA",
                        proj_season=top - i * 8.0)

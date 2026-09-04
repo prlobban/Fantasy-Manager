@@ -43,6 +43,11 @@ draft:
   room_demand_cap: 0.10
   run_join_weight: 0.06        # a run is on and we get in front of it
   run_wait_weight: 0.04        # a position the room is skipping; wait on it
+  # §3.7 — a starter sharing a bye with one we already have. Costs ONE week
+  # of the gap to his bench cover, not a share of his season; the 0.08 this
+  # replaced was ~4x too steep and never fired until the benchmark supplied
+  # real bye weeks.
+  bye_collision_weight: 0.02
 
   # §3.7 — how much a player's VOR counts AGAIN toward filling an empty
   # starting slot. Never scaled by raw points: that reintroduces the
