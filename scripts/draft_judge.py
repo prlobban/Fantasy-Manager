@@ -14,10 +14,12 @@ killed the moment we are on the clock, and a killed run writes nothing.
 
     python scripts/draft_judge.py                 # newest draft dir
     python scripts/draft_judge.py --draft-dir data/drafts/2026...-live
-    python scripts/draft_judge.py --shadow        # decide, log, never write
+    python scripts/draft_judge.py --shadow        # label its posts as shadow
 
-Shadow is the default for the first live draft: it produces the whole verdict
-and posts it, but writes to `verdicts-shadow/` so the loop never sees it.
+**Whether a verdict actually moves a pick is the LOOP's decision**, set by
+`scripts/draft.py --judge shadow|live`. This process always writes to the same
+place; `--shadow` only changes what it says about itself. Keeping one path is
+deliberate — see the note in main().
 """
 
 from __future__ import annotations
@@ -118,7 +120,9 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--draft-dir", type=Path, default=None)
     ap.add_argument("--shadow", action="store_true",
-                    help="produce and post verdicts but never let the loop see them")
+                    help="label this process's Slack posts as shadow. Whether a "
+                         "verdict actually MOVES a pick is the loop's call "
+                         "(scripts/draft.py --judge shadow|live), not this flag.")
     ap.add_argument("--once", action="store_true", help="one pick, then exit")
     args = ap.parse_args()
 
@@ -127,8 +131,18 @@ def main() -> int:
         log.error("no draft directory — start scripts/draft.py first")
         return 1
 
-    out_dir = draft_dir / ("verdicts-shadow" if args.shadow else "verdicts")
-    out_dir.mkdir(parents=True, exist_ok=True)
+    # ONE verdict directory, always. An earlier version wrote shadow verdicts
+    # to a separate tree and passed that tree to vmod.write, which appends its
+    # own "verdicts" level — so live mode wrote to verdicts/verdicts/ while the
+    # loop read verdicts/, and would never have found a single verdict. Found
+    # by scripts/rehearse_judge.py on 2026-09-04, which is the entire reason
+    # that script exists.
+    #
+    # Shadow-vs-live is the LOOP's decision (DraftConfig.judge) and belongs
+    # there: it is the loop that either applies a verdict or reports it and
+    # throws it away. This flag only changes what this process says about
+    # itself, so the two can never disagree about a path again.
+    vmod.dir_for(draft_dir).mkdir(parents=True, exist_ok=True)
 
     bd = board_mod.load()
     me = client().my_team_id
@@ -210,7 +224,7 @@ def main() -> int:
             continue
 
         v = vmod.parse(payload, plan=plan, for_overall=overall)
-        vmod.write(out_dir, overall, payload)
+        vmod.write(draft_dir, overall, payload)
         done.add(overall)
 
         log.info("verdict #%d in %.0fs: %s", overall, took, v.describe())

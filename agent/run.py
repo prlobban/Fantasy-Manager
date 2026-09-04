@@ -252,8 +252,14 @@ def run(task: str, packet: dict, *, dry_run: bool = False,
     )
 
     model = cfg.claude_research_model if spec.model == "research" else cfg.claude_model
+    # The packet goes in on STDIN, not as an argv. A judge packet carrying 15
+    # candidates with their dossiers is ~41k characters, and Windows caps a
+    # command line at ~32k: measured 2026-09-04 as
+    # "[WinError 206] The filename or extension is too long", with the judge
+    # failing instantly on every turn. Linux would have survived this one at
+    # ~2MB, but the limit is a cliff nobody sees coming and stdin has none.
     cmd = [
-        cfg.claude_bin, "-p", user_msg,
+        cfg.claude_bin, "-p",
         "--system-prompt-file", str(sys_prompt_path),
         "--output-format", "json",
         "--json-schema", schema_json,
@@ -276,19 +282,21 @@ def run(task: str, packet: dict, *, dry_run: bool = False,
         cmd += ["--allowedTools", spec.tools]
 
     if dry_run:
-        log.info("DRY RUN — would invoke: %s", " ".join(cmd[:2] + ["<packet>"] + cmd[3:]))
+        log.info("DRY RUN — would invoke: %s  <<< %d chars of packet on stdin",
+                 " ".join(cmd), len(user_msg))
         return AgentResult(True, task, None, "", error=None, transcript=sys_prompt_path)
 
     log.info("invoking claude for task %r (%d chars of packet)", task, len(user_msg))
     try:
         with subprocess.Popen(
-            cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+            cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE, text=True, encoding="utf-8",
             cwd=str(REPO_ROOT),
         ) as proc:
             if proc_box is not None:
                 proc_box["proc"] = proc
             try:
-                stdout, stderr = proc.communicate(timeout=timeout)
+                stdout, stderr = proc.communicate(user_msg, timeout=timeout)
             except subprocess.TimeoutExpired:
                 proc.kill()
                 proc.communicate()

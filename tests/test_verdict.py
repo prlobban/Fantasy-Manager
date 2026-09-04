@@ -210,3 +210,33 @@ def test_a_half_written_file_is_never_read(tmp_path):
     mid-flight — the judge writes while the loop is polling."""
     V.write(tmp_path, 17, raw())
     assert not list(V.dir_for(tmp_path).glob("*.tmp"))
+
+
+# ── the writer and the reader must agree about the path ─────────────────────
+
+def test_the_judge_writes_where_the_loop_reads(tmp_path):
+    """The bug that made live mode silently useless.
+
+    draft_judge.py passed its own `verdicts-shadow/` directory to vmod.write,
+    which appends its own "verdicts" level — so the judge wrote
+    verdicts-shadow/verdicts/N.json while the loop read verdicts/N.json. In
+    live mode it would have written verdicts/verdicts/N.json and the loop
+    would never have found a single verdict. Nothing failed loudly; the judge
+    just appeared to have no opinions.
+
+    Found by scripts/rehearse_judge.py, 2026-09-04.
+    """
+    from core.draft.run import consult_judge
+
+    V.write(tmp_path, 17, raw(veto=[lever(1, "Gibbs")]))
+
+    # Exactly one JSON file, exactly where path_for says it is.
+    files = list(tmp_path.rglob("*.json"))
+    assert files == [V.path_for(tmp_path, 17)], f"wrote to {files}"
+    assert not list(tmp_path.rglob("verdicts/verdicts")), "nested verdicts dir"
+
+    # And the loop's own read path finds it.
+    out, verdict, _ = consult_judge(P, mode="live", draft_dir=tmp_path,
+                                    overall=17)
+    assert verdict is not None and len(verdict.vetoes) == 1
+    assert out.best.player.name == "Bijan", "the lever never reached the pick"
