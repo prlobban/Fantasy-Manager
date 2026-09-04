@@ -43,6 +43,7 @@ from core.model.priors import priors
 from core.model.schema import Action, ActionKind
 from core.notify import notify
 from core.state import decisions
+from core.state.draftlog import DraftLog
 
 log = logging.getLogger(__name__)
 
@@ -161,7 +162,24 @@ def run(cfg: DraftConfig | None = None) -> DraftStats:
     p = priors()
     depth = cfg.queue_depth or int(p.get("draft.queue_depth"))
 
-    bd, room = preflight(cfg)
+    dlog = DraftLog("practice" if cfg.practice else "live")
+    dlog.attach()
+    log.info("draft log -> %s", dlog.dir)
+
+    try:
+        bd, room = preflight(cfg)
+    except Exception as e:
+        dlog.problem("preflight failed", str(e)[:300])
+        dlog.close()
+        raise
+
+    dlog.header(
+        league=bd.facts.settings.name, team=settings().team_name,
+        slot=bd.facts.pick_order.index(room.my_team_id) + 1,
+        teams=len(bd.facts.pick_order), my_picks=room.my_picks,
+        board_players=len(bd.players), board_age_h=bd.age_hours(),
+        dry_run=cfg.dry_run, click=cfg.click,
+    )
     rows = bd.rows
     by_id = bd.by_id
     stats = DraftStats()
@@ -244,13 +262,17 @@ def run(cfg: DraftConfig | None = None) -> DraftStats:
                     if qsync and new:
                         qsync.reset_attempts()
 
-                    if new:
-                        log.info(
-                            "pick %d: %s → best now %s",
-                            new[-1].overall,
-                            new[-1].name,
-                            last_plan.best.player.name if last_plan.best else "?",
-                        )
+                    for i, pk in enumerate(new):
+                        # Only the LAST of a batch changes what the board leads
+                        # with; the earlier ones are recorded as they happened.
+                        lead = (last_plan.best.player.name
+                                if last_plan.best and i == len(new) - 1 else None)
+                        log.info("pick %d: %s (%s) by team %s%s",
+                                 pk.overall, pk.name,
+                                 pk.pos.value if pk.pos else "?", pk.team_id,
+                                 f" → best now {lead}" if lead else "")
+                        dlog.room_pick(pk, ours=pk.team_id == room.my_team_id,
+                                       best_now=lead)
 
                 # ── the queue write comes FIRST, always (§3.3) ───────────────
                 # Every cycle, not only after a new pick: when nothing changed
@@ -270,8 +292,14 @@ def run(cfg: DraftConfig | None = None) -> DraftStats:
                     ops, ok = qsync.sync(target, dry_run=cfg.dry_run,
                                          budget_s=QUEUE_SYNC_BUDGET_S,
                                          abort=dom_says_our_turn)
-                    our_turn = room.on_the_clock_is_us or dom_says_our_turn()
+                    aborted = room.on_the_clock_is_us or dom_says_our_turn()
+                    our_turn = aborted
                     stats.queue_ops += ok
+                    dlog.queue(
+                        target=[by_id[i].name for i in target if i in by_id],
+                        current=qsync.last_current_size, ops=ops,
+                        landed=ok, aborted=aborted,
+                    )
                     if ops and ok < len(ops):
                         log.warning("queue sync: only %d/%d ops landed", ok, len(ops))
 
@@ -292,8 +320,12 @@ def run(cfg: DraftConfig | None = None) -> DraftStats:
                         and time.monotonic() - last_at >= PICK_RETRY_SECONDS
                     )):
                         attempted[overall] = (n_tries + 1, time.monotonic())
+                        if n_tries == 0:
+                            # The whole board state and every adjustment term,
+                            # written BEFORE the click so it survives a failure.
+                            dlog.our_turn(last_plan, room, overall=overall)
                         counted = _make_pick(session, cfg, room, last_plan, stats,
-                                             retry=n_tries > 0)
+                                             dlog, retry=n_tries > 0)
                         if not counted:
                             # The target was gone anyway: not an attempt. Go
                             # again next cycle rather than after the retry wait.
@@ -313,6 +345,7 @@ def run(cfg: DraftConfig | None = None) -> DraftStats:
                 raise
             except Exception as e:
                 stats.errors.append(str(e))
+                dlog.problem("cycle error", str(e)[:300])
                 log.exception("cycle error (continuing — the queue still stands)")
                 # The queue is the net: a broken cycle does not blow a pick,
                 # it just means ESPN autopicks our current #1.
@@ -321,8 +354,13 @@ def run(cfg: DraftConfig | None = None) -> DraftStats:
     finally:
         if session:
             session.close()
+        try:
+            _postflight(bd, room, stats, dlog)
+        except Exception:
+            log.exception("postflight failed")
+        log.info("draft log written to %s", dlog.dir)
+        dlog.close()
 
-    _postflight(bd, room, stats)
     return stats
 
 
@@ -349,7 +387,7 @@ def _reread(room: RoomModel) -> list:
 
 
 def _make_pick(session, cfg: DraftConfig, room: RoomModel, plan, stats: DraftStats,
-               *, retry: bool = False) -> bool:
+               dlog: DraftLog, *, retry: bool = False) -> bool:
     """Try to draft plan.best. Returns False only when the target turned out
     to be already drafted — a stale plan, not a failed attempt."""
     best = plan.best
@@ -378,6 +416,14 @@ def _make_pick(session, cfg: DraftConfig, room: RoomModel, plan, stats: DraftSta
                              reason=f"queue-only mode; expecting autopick of {best.player.name}",
                              predicted=predicted, alternative=alternative, executed=False)
         log.info("queue-only: leaving %s at the top for autopick", best.player.name)
+        dlog.pick_made(
+            overall=room.next_overall, name=best.player.name,
+            pos=best.player.pos.value, vor=best.valuation.vor, score=best.score,
+            tier=best.valuation.tier,
+            runner_up=runner_up.player.name if runner_up else None,
+            runner_up_vor=runner_up.valuation.vor if runner_up else None,
+            how="queue-only (expecting autopick)",
+        )
         return True
 
     from core.gates import write_gate
@@ -402,6 +448,14 @@ def _make_pick(session, cfg: DraftConfig, room: RoomModel, plan, stats: DraftSta
         )
         if gate.allowed and receipt is not None:
             stats.our_picks.append(best.player.name)
+            dlog.pick_made(
+                overall=room.next_overall, name=best.player.name,
+                pos=best.player.pos.value, vor=best.valuation.vor, score=best.score,
+                tier=best.valuation.tier,
+                runner_up=runner_up.player.name if runner_up else None,
+                runner_up_vor=runner_up.valuation.vor if runner_up else None,
+                how="clicked" + (" (retry)" if retry else ""), receipt=str(receipt),
+            )
             notify("action", f"Pick {room.next_overall}: {best.player.name}"
                    + (" (retry)" if retry else ""),
                    f"{best.player.pos.value} · VOR {best.valuation.vor:.1f} · "
@@ -410,6 +464,16 @@ def _make_pick(session, cfg: DraftConfig, room: RoomModel, plan, stats: DraftSta
         elif gate.allowed:
             # dry-run: gate passed, nothing was clicked
             log.info("DRY RUN pick %d would be %s", room.next_overall, best.player.name)
+            dlog.pick_made(
+                overall=room.next_overall, name=best.player.name,
+                pos=best.player.pos.value, vor=best.valuation.vor, score=best.score,
+                tier=best.valuation.tier,
+                runner_up=runner_up.player.name if runner_up else None,
+                runner_up_vor=runner_up.valuation.vor if runner_up else None,
+                how="DRY RUN (not clicked)",
+            )
+        else:
+            dlog.problem("write refused", f"{gate.refused_by}: {gate.reason}")
     except Exception as e:
         if "DRAFTED" in str(e):
             # Either the pick before ours took him (stale plan: re-rank and
@@ -420,13 +484,25 @@ def _make_pick(session, cfg: DraftConfig, room: RoomModel, plan, stats: DraftSta
             if best.player.espn_id in ours:
                 stats.our_picks.append(best.player.name)
                 log.info("%s was autopicked for us from the queue — counting it", best.player.name)
+                dlog.pick_made(
+                    overall=room.next_overall - 1, name=best.player.name,
+                    pos=best.player.pos.value, vor=best.valuation.vor, score=best.score,
+                    tier=best.valuation.tier,
+                    runner_up=runner_up.player.name if runner_up else None,
+                    runner_up_vor=runner_up.valuation.vor if runner_up else None,
+                    how="ESPN autopick from the top of our queue",
+                )
                 notify("action", f"Pick {room.next_overall - 1}: {best.player.name} (via queue)",
                        f"{best.player.pos.value} · VOR {best.valuation.vor:.1f} · tier "
                        f"{best.valuation.tier} · ESPN autopicked him from the top of our queue.")
                 return True
             log.warning("target %s was already drafted — re-ranking", best.player.name)
+            dlog.problem("target already drafted",
+                         f"{best.player.name} went to someone else before our click; re-ranking")
             return False
         stats.errors.append(f"pick failed: {e}")
+        dlog.problem("click leg failed",
+                     f"{best.player.name}: {str(e)[:200]} — leaving him top of the queue")
         notify("warn", "Click leg failed — falling back to the queue",
                f"{best.player.name} is top of the queue; ESPN will autopick him "
                f"when the timer expires.\n{e}")
@@ -535,7 +611,7 @@ def _wait_for_room(session, timeout_ms: int = 60_000) -> None:
         log.info("room: %s", " ".join((train.first.inner_text() or "").split())[:160])
 
 
-def _postflight(bd, room: RoomModel, stats: DraftStats) -> None:
+def _postflight(bd, room: RoomModel, stats: DraftStats, dlog: DraftLog) -> None:
     roster = [p for p in room.picks if p.team_id == room.my_team_id]
     lines = [f"  R{(p.overall - 1)//room.n_teams + 1:>2} #{p.overall:>3}  "
              f"{p.name} ({p.pos.value if p.pos else '?'})" for p in roster]
@@ -546,6 +622,8 @@ def _postflight(bd, room: RoomModel, stats: DraftStats) -> None:
         f"Draft finished — {len(roster)} picks",
         body + (f"\n\n{len(stats.errors)} error(s): {stats.errors[:3]}" if stats.errors else ""),
     )
+    dlog.finish(roster=[f"R{(p.overall - 1)//room.n_teams + 1} #{p.overall} {p.name}"
+                        for p in roster], stats=stats)
     decisions.record(
         ActionKind.NOTIFY, cites=["§3.8"], reason="draft complete",
         predicted={"picks": float(len(roster)), "cycles": float(stats.cycles)},

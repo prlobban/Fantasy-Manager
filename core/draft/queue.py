@@ -106,6 +106,7 @@ class QueueSync:
         )
         self._add_attempts: dict[int, int] = {}
         self._last_good: list[int] = []
+        self.last_current_size = 0
 
     def ensure_autopick_off(self) -> bool:
         """Switch ESPN's Autopick toggle OFF if it is on. Returns True if it
@@ -352,6 +353,9 @@ class QueueSync:
         for pid in current:
             self._add_attempts.pop(pid, None)
         self._last_good = current
+        #: Size of the queue as this sync found it. Read by the draft log so
+        #: it does not have to hit the DOM again while the clock is running.
+        self.last_current_size = len(current)
 
         ops = plan_ops(current, target)
         if not ops:

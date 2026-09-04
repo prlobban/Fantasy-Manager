@@ -122,6 +122,9 @@ def rank(
     max_cost = max((o.cost for o in outlooks.values()), default=0.0) or 1.0
 
     no_k_dst_until = int(p.get("draft.no_kicker_dst_until_last_n_rounds"))
+    hole_weight = float(p.get("draft.hole_weight"))
+    stack_penalty = float(p.get("draft.stack_penalty"))
+    bench_cost = float(p.get("draft.bench_opportunity_cost"))
     bench_spots = room.facts.settings.bench_count
 
     # §3.7 — the endgame constraint. Once the rounds remaining equal the number
@@ -239,7 +242,7 @@ def rank(
             # one receiver. Spending a pick on depth while a slot is open has a
             # real cost, and this is it.
             if hole_pressure > 0:
-                oppo = -_BENCH_OPPORTUNITY_COST * hole_pressure
+                oppo = -bench_cost * hole_pressure
                 score += oppo
                 reasons["depth_while_short"] = oppo
 
@@ -251,25 +254,32 @@ def rank(
         # the surplus block on purpose: an open flex does not excuse a TE2.
         stack = _stack_depth(room, player.pos, my_pos)
         if stack > 0:
-            pen = -_STACK_PENALTY * stack
+            pen = -stack_penalty * stack
             score += pen
             reasons["stacking"] = pen
             notes.append(f"{player.pos.value}{my_pos.get(player.pos, 0) + 1} is depth")
 
         # §3.7 — starting-lineup holes come before depth.
         #
-        # An EMPTY starting slot scores zero points, not replacement-level
-        # points, and VOR cannot see that: it measures a player against the
-        # starter you'd otherwise field, and assumes there is one. So filling a
-        # genuine hole earns a bonus scaled by the player's real point
-        # contribution and by how much of our remaining draft capital the
-        # outstanding holes represent.
+        # Scaled by VOR, and that scaling is the whole point. An earlier
+        # version scaled by RAW PROJECTED POINTS, on the reasoning that an
+        # empty slot scores zero rather than replacement level. That reasoning
+        # is wrong mid-draft: the endgame rule below guarantees every mandatory
+        # slot gets filled before the draft ends, so the real counterfactual is
+        # never zero — it is "the player I take at this position later", which
+        # is exactly what VOR measures.
         #
-        # The previous gate (`rounds_left <= slots_left + 2`) never fired in the
-        # middle rounds, which left the engine indifferent between a wide
+        # Scaling by raw points quietly reintroduced the cross-position bias
+        # VOR exists to remove. Quarterbacks accumulate the most raw points and
+        # are worth the least positionally, so they collected the largest bonus
+        # on the board: caught 2026-09-04 with Drake Maye (29 VOR) ranked above
+        # Kenneth Walker (45 VOR) at pick 17, purely on this term.
+        #
+        # The gate before that (`rounds_left <= slots_left + 2`) never fired in
+        # the middle rounds, which left the engine indifferent between a wide
         # receiver and a third tight end while it had no wide receivers at all.
         if _starting_hole(room, player.pos, my_pos) > 0 and hole_pressure > 0:
-            bump = _HOLE_WEIGHT * val.points * hole_pressure
+            bump = hole_weight * max(val.vor, 0.0) * hole_pressure
             score += bump
             reasons["fills_hole"] = bump
 
@@ -340,18 +350,6 @@ def _unfilled_mandatory(room: RoomModel, have) -> dict[Pos, int]:
 #: one-TE league plays on the bye and almost never again.
 #:
 #: [v1 priors] — §7 moves these.
-#: How much a player's raw projected points count toward filling an empty
-#: starting slot. [v1 prior]
-_HOLE_WEIGHT = 0.15
-
-#: Season points forgone by spending a pick on bench depth while a starting
-#: slot is still empty. [v1 prior]
-_BENCH_OPPORTUNITY_COST = 25.0
-
-#: Season points charged per extra bench body at one position, beyond its
-#: starters and flex share. [v1 prior]
-_STACK_PENALTY = 25.0
-
 _SURPLUS_LADDER_DEEP = (0.30, 0.12, 0.05)    # position has 2+ starting slots
 _SURPLUS_LADDER_SHALLOW = (0.15, 0.06, 0.02)  # position has 1 starting slot
 

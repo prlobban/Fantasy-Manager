@@ -33,6 +33,19 @@ draft:
   # §3.7 — never take K or D/ST before the final N rounds.
   no_kicker_dst_until_last_n_rounds: 2
 
+  # §3.7 — how much a player's VOR counts AGAIN toward filling an empty
+  # starting slot. Never scaled by raw points: that reintroduces the
+  # cross-position bias VOR exists to remove (2026-09-04).
+  hole_weight: 0.15
+
+  # §3.7 — season points charged per extra bench body at a position, beyond
+  # its starters (plus the flex, for RB/WR only).
+  stack_penalty: 25.0
+
+  # §3.7 — season points forgone by spending a pick on bench depth while a
+  # starting slot is still empty.
+  bench_opportunity_cost: 25.0
+
   # Board is stale if older than this (hours) at draft time.
   board_max_age_hours: 3
 
