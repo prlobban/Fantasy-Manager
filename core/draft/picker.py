@@ -122,6 +122,15 @@ def rank(
     max_cost = max((o.cost for o in outlooks.values()), default=0.0) or 1.0
 
     no_k_dst_until = int(p.get("draft.no_kicker_dst_until_last_n_rounds"))
+    # The bonus weights. Priors rather than literals so the backtest can sweep
+    # them (scripts/backtest_tune.py) — a coefficient nobody can vary is a
+    # coefficient nobody can show to be right.
+    w_scarcity = float(p.get("draft.scarcity_weight"))
+    w_tier = float(p.get("draft.tier_break_weight"))
+    w_demand = float(p.get("draft.room_demand_per_team"))
+    w_demand_cap = float(p.get("draft.room_demand_cap"))
+    w_run_join = float(p.get("draft.run_join_weight"))
+    w_run_wait = float(p.get("draft.run_wait_weight"))
     hole_weight = float(p.get("draft.hole_weight"))
     stack_penalty = float(p.get("draft.stack_penalty"))
     bench_cost = float(p.get("draft.bench_opportunity_cost"))
@@ -161,7 +170,7 @@ def rank(
         notes: list[str] = []
 
         # §3.5 — waiting at this position is expensive.
-        scarcity = 0.35 * val.vor * (o.cost / max_cost) if max_cost > 0 else 0.0
+        scarcity = w_scarcity * val.vor * (o.cost / max_cost) if max_cost > 0 else 0.0
         if scarcity:
             score += scarcity
             reasons["scarcity"] = scarcity
@@ -169,26 +178,26 @@ def rank(
         # §3.4 — the tier is about to break. Only the top remaining tier counts;
         # a thin tier five deep in the position is not urgent.
         if val.tier == o.top_tier and o.top_tier_remaining <= 2:
-            bump = 0.12 * val.vor * (3 - o.top_tier_remaining)
+            bump = w_tier * val.vor * (3 - o.top_tier_remaining)
             score += bump
             reasons["tier_break"] = bump
             notes.append(f"last {o.top_tier_remaining} in tier {val.tier}")
 
         # §3.6 — teams ahead of us need this position.
         if d := demand.get(player.pos, 0):
-            bump = min(0.10, 0.02 * d) * val.vor
+            bump = min(w_demand_cap, w_demand * d) * val.vor
             score += bump
             reasons["room_demand"] = bump
 
         # §3.6 — a run is on. Get in front of it, or take what's being skipped.
         if run is not None:
             if player.pos is run:
-                bump = 0.06 * val.vor
+                bump = w_run_join * val.vor
                 score += bump
                 reasons["run_join"] = bump
             elif o.cost < 0.25 * max_cost:
                 # Everyone's ignoring this position; the value is still here later.
-                bump = -0.04 * val.vor
+                bump = -w_run_wait * val.vor
                 score += bump
                 reasons["run_wait"] = bump
 

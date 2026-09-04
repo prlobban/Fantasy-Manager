@@ -62,3 +62,6 @@ _scratch_*.py
 # "on" once (2026-09-04) mid-rehearsal; a pull would have silently enabled
 # writes on the box. Each machine owns its own.
 ENABLED
+
+# Backtest raw pulls — ~90MB of ESPN JSON, regenerable from the API on demand.
+data/backtest/

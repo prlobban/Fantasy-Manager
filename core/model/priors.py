@@ -7,6 +7,7 @@ is reached through this module. A literal threshold anywhere else is a bug.
 
 from __future__ import annotations
 
+import contextlib
 import functools
 from pathlib import Path
 from typing import Any
@@ -64,3 +65,37 @@ class Priors:
 def priors() -> Priors:
     """Process-wide singleton. Cached so a run can't half-reload mid-decision."""
     return Priors.load()
+
+
+@contextlib.contextmanager
+def overridden(**dotted: Any):
+    """Temporarily change priors, then restore them exactly.
+
+    For the backtest sweep (scripts/backtest_tune.py) and for tests. A
+    coefficient that cannot be varied cannot be shown to be right, and the
+    alternative — editing priors.yaml between runs — leaves the file wrong if a
+    sweep dies halfway through.
+
+    Deliberately NOT for production code: a live decision reads the committed
+    priors or it is not reproducible. Double underscores stand in for dots,
+    because keyword arguments cannot contain them:
+
+        with overridden(draft__scarcity_weight=0.5): ...
+    """
+    p = priors()
+    saved: list[tuple[dict, str, Any]] = []
+    try:
+        for key, value in dotted.items():
+            parts = key.replace("__", ".").split(".")
+            node: Any = p._raw
+            for part in parts[:-1]:
+                node = node[part]
+            saved.append((node, parts[-1], node.get(parts[-1])))
+            node[parts[-1]] = value
+        yield p
+    finally:
+        for node, leaf, old in reversed(saved):
+            if old is None:
+                node.pop(leaf, None)
+            else:
+                node[leaf] = old

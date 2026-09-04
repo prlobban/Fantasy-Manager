@@ -175,17 +175,24 @@ def normalise_name(n: str) -> str:
 _MISSED = {"out", "doubtful", "injured reserve", "ir", "pup", "nfi"}
 
 
-@lru_cache(maxsize=1)
-def injury_history_by_gsis() -> dict[str, list[InjuryEvent]]:
+@lru_cache(maxsize=4)
+def injury_history_by_gsis(
+    seasons: tuple[int, ...] | None = None,
+) -> dict[str, list[InjuryEvent]]:
     """Per-player injury events over the last three completed seasons.
 
     One event per (season, primary injury), with games missed counted from
     weekly report rows where the player was ruled out. That is an approximation
     — the injury report is a weekly snapshot, not a ledger — and it is the best
     signal available without a paid feed.
+
+    `seasons` overrides the window. The backtest needs it: replaying 2025 may
+    only see 2022-2024, because handing the engine the injury history of the
+    season it is drafting is hindsight — the one thing a backtest must not have.
+    A tuple, not a list, so the cache key stays hashable.
     """
     try:
-        df = injuries()
+        df = injuries(list(seasons) if seasons else None)
     except Exception as e:
         log.error("could not load nflverse injuries: %s — durability falls back to base rates", e)
         return {}
@@ -234,11 +241,13 @@ def injury_history_by_gsis() -> dict[str, list[InjuryEvent]]:
     return dict(out)
 
 
-def history_for(espn_id: int, name: str) -> tuple[list[InjuryEvent], bool]:
+def history_for(espn_id: int, name: str,
+                seasons: tuple[int, ...] | None = None) -> tuple[list[InjuryEvent], bool]:
     """(events, matched) for one ESPN player. `matched` False means we found no
     nflverse record at all — the caller should treat durability as unknown
-    rather than as clean."""
-    hist = injury_history_by_gsis()
+    rather than as clean. `seasons` restricts the window (see
+    `injury_history_by_gsis`)."""
+    hist = injury_history_by_gsis(seasons)
     if not hist:
         return [], False
 
