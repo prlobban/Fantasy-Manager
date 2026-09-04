@@ -164,12 +164,28 @@ def validate(raw: dict, *, now: datetime | None = None,
 
     n_hosts = len(d.hosts)
 
-    # A veto removes a player from the board entirely. That is the largest
-    # thing a research agent can do, so it carries the largest evidence bar.
-    if d.veto and (d.confidence != "high" or n_hosts < 2):
-        d.demotions.append(
-            f"veto dropped: confidence={d.confidence}, {n_hosts} host(s), "
-            "needs high + 2")
+    # A veto removes a player from the board entirely, so it carries the
+    # largest evidence bar. The bar is EVIDENCE, not the model's opinion of its
+    # own evidence.
+    #
+    # This first gated on `confidence == "high"`, and two runs over the same
+    # player proved that wrong: Josh Jacobs on the Commissioner's Exempt List,
+    # identical facts and three independent outlets both times, came back
+    # "high" on one machine and "medium" on the other. The veto landed once and
+    # was demoted once — a coin flip on whether a player who cannot take the
+    # field stays draftable (measured 2026-09-04).
+    #
+    # `durability.verdict` is a schema enum meaning "not expected to play", and
+    # hosts are countable. Confidence is an adjective a model picks about
+    # itself. Gate on the two that are checkable; keep confidence for the log.
+    out = str(d.durability.get("verdict") or "").lower() == "out"
+    if d.veto and (not out or n_hosts < 2):
+        why = []
+        if not out:
+            why.append(f"durability={d.durability.get('verdict')!r}, needs 'out'")
+        if n_hosts < 2:
+            why.append(f"{n_hosts} host(s), needs 2")
+        d.demotions.append("veto dropped: " + "; ".join(why))
         d.veto = False
         d.veto_reason = None
 

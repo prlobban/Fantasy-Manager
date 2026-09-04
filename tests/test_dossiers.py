@@ -78,35 +78,55 @@ def test_www_is_stripped_so_hosts_dedupe():
 
 # ── the veto bar ─────────────────────────────────────────────────────────────
 
+def _out(**over):
+    """A dossier whose durability verdict is the schema's 'not expected to play'."""
+    base = {"veto": True, "veto_reason": "out for the season",
+            "durability": {"verdict": "out", "detail": "on the exempt list"},
+            "sources": ["https://www.espn.com/a", "https://www.nfl.com/b"]}
+    base.update(over)
+    return make(**base)
+
+
 def test_veto_needs_two_independent_hosts():
-    got, problems = d.validate(make(
-        veto=True, veto_reason="torn ACL", confidence="high",
+    got, problems = d.validate(_out(
         sources=["https://www.espn.com/a", "https://www.espn.com/b"]))
     assert got.veto is False, "one outlet must not be able to erase a player"
     assert got.veto_reason is None
     assert any("veto dropped" in p for p in problems)
 
 
-def test_veto_needs_high_confidence():
-    got, _ = d.validate(make(
-        veto=True, veto_reason="maybe done", confidence="medium",
-        sources=["https://www.espn.com/a", "https://www.nfl.com/b"]))
+def test_veto_needs_the_durability_verdict_to_say_out():
+    """'concern' is a reason to discount a player, not to erase him."""
+    got, problems = d.validate(_out(
+        durability={"verdict": "concern", "detail": "knee, twice"}))
     assert got.veto is False
+    assert any("needs 'out'" in p for p in problems)
 
 
 def test_a_properly_evidenced_veto_stands():
-    got, problems = d.validate(make(
-        veto=True, veto_reason="torn Achilles, out for the season",
-        confidence="high",
-        sources=["https://www.espn.com/a", "https://www.nfl.com/b"]))
+    got, problems = d.validate(_out())
     assert got.veto is True
     assert problems == []
 
 
+@pytest.mark.parametrize("confidence", ["high", "medium", "low"])
+def test_the_veto_does_not_hinge_on_self_reported_confidence(confidence):
+    """The bug this rule replaced.
+
+    Josh Jacobs on the Commissioner's Exempt List: identical facts and three
+    independent outlets on two runs, self-graded "high" on one machine and
+    "medium" on the other. Under a confidence gate the veto landed once and was
+    demoted once — a coin flip on whether a player who cannot take the field
+    stays draftable. Evidence is checkable; an adjective about the evidence is
+    not.
+    """
+    got, _ = d.validate(_out(confidence=confidence))
+    assert got.veto is True, f"confidence={confidence} changed the outcome"
+
+
 def test_a_dropped_veto_keeps_the_prose():
     """Demotion costs the claim, not the record — the judge still reads it."""
-    got, _ = d.validate(make(
-        veto=True, veto_reason="x", confidence="low",
+    got, _ = d.validate(_out(
         durability={"verdict": "concern", "detail": "knee, twice"},
         sources=["https://www.espn.com/a"]))
     assert got.veto is False
@@ -178,8 +198,7 @@ def test_overrides_payload_shape_matches_what_the_board_reads():
     ds = {
         1: d.validate(make(espn_id=1, multiplier=1.12,
                            sources=["https://a.com/1", "https://b.com/2"]))[0],
-        2: d.validate(make(espn_id=2, veto=True, veto_reason="out for year",
-                           confidence="high",
+        2: d.validate(_out(espn_id=2, veto_reason="out for year",
                            sources=["https://a.com/1", "https://b.com/2"]))[0],
         3: d.validate(make(espn_id=3))[0],       # 1.0, no veto -> not emitted
     }
