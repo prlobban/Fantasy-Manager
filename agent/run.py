@@ -88,7 +88,18 @@ TASKS: dict[str, TaskSpec] = {
 
     # §3.10 — judgment between our turns. Reads a packet, returns JSON. It gets
     # the doctrine (it cites sections) and no tools whatsoever.
-    "judge": TaskSpec("judge.md", "verdict.json", "", False, True, max_turns=1),
+    #
+    # Two measured corrections, 2026-09-04, both of which cost a full-price
+    # run that produced nothing:
+    #
+    # 1. `--json-schema` delivers the answer THROUGH a tool call named
+    #    StructuredOutput. Blanket-denying tools denies the answer: the model
+    #    wrote a correct verdict twice and both were refused as permission
+    #    denials. So the allowlist names StructuredOutput and nothing else —
+    #    no Bash, no web, no MCP, but the one channel it answers on.
+    # 2. That tool call costs turns, so max_turns is 3 rather than 1.
+    "judge": TaskSpec("judge.md", "verdict.json", "StructuredOutput", False, True,
+                      max_turns=3),
 }
 
 
@@ -258,10 +269,11 @@ def run(task: str, packet: dict, *, dry_run: bool = False,
     cmd += ["--strict-mcp-config"]
     if spec.mcp:
         cmd += ["--mcp-config", str(_write_mcp_config(run_dir / f"{stamp}-mcp.json"))]
+    # An allowlist, always. A blanket --disallowedTools "*" also denies
+    # StructuredOutput, which is how --json-schema returns the answer, so a
+    # task ends up refusing its own output (measured 2026-09-04).
     if spec.tools:
         cmd += ["--allowedTools", spec.tools]
-    else:
-        cmd += ["--disallowedTools", "*"]
 
     if dry_run:
         log.info("DRY RUN — would invoke: %s", " ".join(cmd[:2] + ["<packet>"] + cmd[3:]))
