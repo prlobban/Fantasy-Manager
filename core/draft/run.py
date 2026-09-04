@@ -194,7 +194,7 @@ def run(cfg: DraftConfig | None = None) -> DraftStats:
                     f"/football/draft?leagueId={s_.league_id}&seasonId={s_.season}"
                     f"&teamId={room.my_team_id}&memberId={settings().swid}"
                 )
-                session.goto(url, require_owner_markers=False)
+                _join_room_when_open(session, url, bd.facts.draft_at)
             _wait_for_room(session)
             qsync = QueueSync(session, by_id=by_id)
             dom_reader = DomReader(session, by_name=_by_name(bd), n_teams=room.n_teams)
@@ -471,6 +471,41 @@ def _open_practice_room(session, slot: int) -> None:
     session.page = room
     log.info("practice room opened at slot %d: %s", slot, room.url)
     notify("info", "Practice room opened", f"slot {slot}\n{room.url}")
+
+
+#: How long past the scheduled draft time to keep trying to join the room.
+ROOM_JOIN_GRACE_MINUTES = 15
+
+
+def _join_room_when_open(session, url: str, draft_at) -> None:
+    """Navigate to the real draft room, retrying until ESPN opens it.
+
+    Before the room opens the draft URL bounces to the fantasy home page
+    (verified 2026-09-04). Starting the loop early must not be a crash: keep
+    trying every 30 s until the room renders, giving up only well past the
+    scheduled start.
+    """
+    from datetime import timedelta
+
+    attempt = 0
+    while True:
+        attempt += 1
+        session.goto(url, require_owner_markers=False)
+        try:
+            _wait_for_room(session, timeout_ms=20_000)
+            return
+        except RuntimeError as e:
+            now = datetime.now().astimezone()
+            late = draft_at is not None and now > draft_at + timedelta(
+                minutes=ROOM_JOIN_GRACE_MINUTES)
+            if late:
+                raise
+            log.info("room not open yet (attempt %d): %s — retrying in 30s",
+                     attempt, str(e)[:80])
+            if attempt == 1:
+                notify("info", "Waiting for the draft room to open",
+                       "The loop is up and will join the room the moment ESPN opens it.")
+            time.sleep(30)
 
 
 def _wait_for_room(session, timeout_ms: int = 60_000) -> None:

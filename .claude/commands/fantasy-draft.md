@@ -64,12 +64,15 @@ python scripts/healthcheck.py
 ```
 Then confirm our slot and pick numbers are what the loop reports.
 
-**10:45 — start the loop**
+**10:15 — start the loop (on the box)**
 ```
-python scripts/draft.py --no-click     # queue only, safest
 python scripts/draft.py                # queue + click
+python scripts/draft.py --no-click     # queue only, if you want the safest mode
 ```
-Have the draft room open on the laptop too. Not to drive it — to see it.
+It passes pre-flight, then waits for ESPN to open the room — the draft URL
+bounces to the home page until then — retrying every 30 s and posting to
+#fantasy when it is in. The queue fills within ~20 s of joining. Have the
+draft room open on the laptop too. Not to drive it — to see it.
 
 ## What the loop does, in priority order
 
@@ -89,6 +92,17 @@ and ESPN drafts **our own #1 anyway**. There is no path to ESPN's default list.
 - `queue_ops` climbing every cycle means the queue is being maintained.
 - Errors are logged and the loop continues, deliberately: a broken cycle does
   not blow a pick, it just means autopick handles that one.
+
+## Two ESPN behaviours to know
+
+- **Autopick after a miss.** If a pick ever expires, ESPN flips the team to
+  Autopick and fills every later turn instantly from the top of our queue.
+  The loop detects the toggle each cycle and switches it back off (and says
+  so in #fantasy). If you are driving by hand, the toggle is in the Pick
+  Queue header.
+- **The 3-second countdown.** For the first ~3 s of our turn every DRAFT
+  button is inert and shows `:03`. The loop waits for it. Do not read a
+  quiet three seconds as a stall.
 
 ## If something breaks
 
