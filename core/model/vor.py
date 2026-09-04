@@ -26,13 +26,59 @@ def compute_vor(
     *,
     points_of: dict[int, float],
     week: int | None = None,
+    availability_of: dict[int, float] | None = None,
 ) -> dict[int, float]:
     """VOR for every player in the pool, keyed by espn_id.
 
-    `points_of` is the already-adjusted projection per player (context and
-    availability applied) so this function stays purely about the baseline.
+    `points_of` is the already-adjusted projection per player.
+
+    🔴 `availability_of` changes the formula, and the reason matters (§2.3,
+    §2.5). Over a season, availability must scale the SURPLUS, not the total:
+
+        VOR = availability x (points - replacement points)
+
+    Multiplying the total instead — which is what an availability-scaled
+    `points_of` does on its own — assumes the slot scores ZERO in the weeks a
+    player misses. It does not: you start a waiver-wire replacement, so the
+    floor is replacement level, not nothing. That mistake charged injury-prone
+    players their whole projection for missed weeks rather than the surplus,
+    and it produced values that were obviously wrong on their face — Jayden
+    Daniels at -103 VOR, Lamar Jackson at -37, both elite quarterbacks.
+
+    The test that catches it: the player AT the replacement rank must come out
+    at exactly 0.0. Under the old formula Mahomes, the replacement quarterback,
+    scored -63.5. Caught 2026-09-04.
+
+    Pass availability for a season-long (`ros`) window. For a single week
+    leave it out: availability is not a scalar there — either he plays or he
+    does not, and durability.py has already applied the status discount.
     """
-    baseline = replacement_baseline(pool, settings, week=week)
+    if availability_of:
+        # Recover the pre-availability projection, baseline on that scale,
+        # then discount the surplus.
+        raw_of = {
+            p.espn_id: (points_of.get(p.espn_id, 0.0) / a
+                        if (a := availability_of.get(p.espn_id, 1.0)) > 0 else 0.0)
+            for p in pool
+        }
+        baseline = replacement_baseline(pool, settings, week=week, points_of=raw_of)
+        out: dict[int, float] = {}
+        for p in pool:
+            a = availability_of.get(p.espn_id, 1.0)
+            if a <= 0:
+                # Cannot play at all. Multiplying the surplus by zero would
+                # score him 0.0 — i.e. exactly replacement level — which in the
+                # dead rounds, where every real player is negative, would float
+                # him to the TOP of the board. He is worth less than nothing:
+                # he cannot fill the slot he occupies. (Today every such player
+                # is also vetoed and the picker drops him; this is here so that
+                # stops being load-bearing.)
+                out[p.espn_id] = -baseline.get(p.pos, 0.0)
+                continue
+            out[p.espn_id] = a * vor_for(raw_of.get(p.espn_id, 0.0), p.pos, baseline)
+        return out
+
+    baseline = replacement_baseline(pool, settings, week=week, points_of=points_of)
     return {
         p.espn_id: vor_for(points_of.get(p.espn_id, 0.0), p.pos, baseline)
         for p in pool

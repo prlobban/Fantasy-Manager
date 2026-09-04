@@ -64,8 +64,21 @@ def replacement_points(
     *,
     projection: str = "proj_season",
     week: int | None = None,
+    points_of: dict[int, float] | None = None,
 ) -> float:
     """Projected points of the replacement-level player at `pos`.
+
+    🔴 `points_of` — the ALREADY-ADJUSTED points every caller in the live path
+    passes — is the scale VOR is measured on, so it is the scale the baseline
+    must be measured on too. Both the ranking and the returned value use it.
+
+    Without it this read raw `proj_season` while `compute_vor` subtracted the
+    baseline from availability-adjusted points: two different scales, and the
+    gap between them differed by position (6 pts at D/ST, 36 at QB), so it
+    silently re-ranked players ACROSS positions — the one thing VOR exists to
+    get right. The tell was that the replacement player himself did not score
+    zero: Mahomes, the QB at replacement rank, came out at -63.5 VOR.
+    Caught 2026-09-04.
 
     Falls back to the worst available player at the position if the pool is
     shallower than the replacement rank, which happens for K and D/ST in small
@@ -77,6 +90,8 @@ def replacement_points(
         return 0.0
 
     def proj(p: Player) -> float:
+        if points_of is not None:
+            return points_of.get(p.espn_id, 0.0)
         if week is not None:
             return p.proj_week.get(week, 0.0)
         return getattr(p, projection, 0.0)
@@ -91,11 +106,17 @@ def replacement_baseline(
     settings: LeagueSettings,
     *,
     week: int | None = None,
+    points_of: dict[int, float] | None = None,
 ) -> dict[Pos, float]:
-    """Replacement points for every position present in the pool."""
+    """Replacement points for every position present in the pool.
+
+    Pass `points_of` whenever you have adjusted points — see the note in
+    replacement_points about why the two must share a scale.
+    """
     present = Counter(p.pos for p in pool)
     return {
-        pos: replacement_points(pos, pool, settings, week=week) for pos in present
+        pos: replacement_points(pos, pool, settings, week=week, points_of=points_of)
+        for pos in present
     }
 
 

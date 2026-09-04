@@ -55,8 +55,20 @@ assumed. (The scoring format was deliberately left unspecified: the agent reads 
 Value is not points. Value is **points above the worst player you'd have to start instead.**
 
 ```
-VOR(player) = ProjPoints(player) − ProjPoints(replacement at that position)
+VOR(player) = Availability(player) × [ ProjPoints(player) − ProjPoints(replacement) ]
 ```
+
+**Availability multiplies the SURPLUS, never the total** *(corrected 2026-09-04)*. Scaling the
+whole projection assumes the slot scores **zero** in the weeks a player misses. It does not — you
+start a waiver-wire replacement, so the floor is replacement level. Getting this wrong charged
+injury-prone players their entire projection for missed weeks and produced values that were absurd
+on their face: Jayden Daniels at −103 VOR, Lamar Jackson at −37, both elite quarterbacks.
+
+**The test that catches it, and must stay true:** the player *at* the replacement rank scores
+**exactly 0.0**. That is what replacement level means. Under the old formula Mahomes, the
+replacement QB, scored −63.5, because the baseline was read off raw projections while every player
+was measured in availability-adjusted points — two different scales, differing by 6 points at D/ST
+and 36 at QB, which silently re-ranked players *across* positions.
 
 Replacement level is computed from *this* league, not a generic table:
 
@@ -68,6 +80,12 @@ replacement_rank(pos) = (n_teams × starters_at_pos)
 
 This is what stops the agent taking a QB in round 2 because he "projects highest." The top QBs
 project huge and are worth little, because QB12 also projects huge.
+
+⚠️ **Two bugs defeated this rule on exactly the case it was written for** (both found 2026-09-04,
+after Pearce asked why a QB went in round 2): the scale mismatch above, and a `§3.7` roster-hole
+bonus scaled by **raw projected points** rather than VOR. Quarterbacks accumulate the most raw
+points and are worth the least positionally, so any term scaled by raw points hands them the
+largest bonus on the board. **Nothing downstream of §2.3 may scale by raw projected points.**
 
 ### §2.4 Tiers, not ranks
 Cluster by VOR gap: a tier ends where the drop to the next player exceeds `[v1 prior: 1.5×]` the

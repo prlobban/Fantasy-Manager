@@ -66,3 +66,31 @@ def test_tiers_are_computed_per_position(settings, pool):
 
 def test_empty_input_is_not_an_error():
     assert tiers_for_position([]) == {}
+
+
+def test_a_player_who_cannot_play_never_scores_replacement_level():
+    """availability x surplus is 0 when availability is 0 — which reads as
+    'exactly replacement level'. In the dead rounds every real player is
+    negative, so a 0 would float an unplayable player to the top of the
+    board. He must come out clearly worse (2026-09-04)."""
+    from core.model.schema import LeagueSettings, Player, Pos, RosterSlot
+    from core.model.vor import compute_vor
+
+    settings = LeagueSettings(
+        league_id=1, season=2026, name="t", team_count=10, draft_type="SNAKE",
+        starting_slots=[RosterSlot(name="RB", count=2, eligible=(Pos.RB,))],
+        bench_count=4, ir_count=1, scoring={53: 0.5}, waiver_type="X",
+        faab_budget=None, trade_deadline=None, playoff_team_count=6,
+        playoff_weeks=[15], regular_season_weeks=14, keeper_count=0,
+    )
+    pool = [Player(espn_id=i, name=f"RB{i}", pos=Pos.RB, pro_team="A",
+                   proj_season=300.0 - i * 5.0) for i in range(1, 40)]
+    points = {p.espn_id: p.proj_season for p in pool}
+    avail = dict.fromkeys(points, 1.0)
+    avail[pool[0].espn_id] = 0.0          # the best player, but out for the season
+
+    vors = compute_vor(pool, settings, points_of=points, availability_of=avail)
+    worst_real = min(v for pid, v in vors.items() if avail[pid] > 0)
+    assert vors[pool[0].espn_id] < worst_real, (
+        "an unplayable player outranked every real one"
+    )

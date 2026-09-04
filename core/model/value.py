@@ -160,7 +160,12 @@ def value_pool(
     # A vetoed player is worth nothing to us, but must not drag the replacement
     # baseline down — he is excluded from the pool the baseline is computed on.
     live = [p for p in pool if not parts[p.espn_id][0].vetoed]
-    vors = compute_vor(live, settings, points_of=points, week=week)
+    # Season-long: availability discounts the surplus, not the total (see
+    # compute_vor). Weekly: it is not a scalar, so it is not passed.
+    avail = ({p.espn_id: parts[p.espn_id][0].availability for p in live}
+             if window == "ros" else None)
+    vors = compute_vor(live, settings, points_of=points, week=week,
+                       availability_of=avail)
     tiers = compute_tiers(live, vors)
 
     out: dict[int, Valuation] = {}

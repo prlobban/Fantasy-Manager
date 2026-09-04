@@ -69,3 +69,28 @@ def test_shallow_pool_falls_back_to_worst_available(settings):
 
 def test_empty_pool_returns_zero(settings):
     assert replacement_points(Pos.RB, [], settings) == 0.0
+
+
+def test_the_replacement_player_himself_scores_zero_vor(settings, pool):
+    """The definition of replacement level. If the player AT the replacement
+    rank does not come out at 0.0, the baseline and the values being compared
+    against it are on different scales — which is what happened when the
+    baseline read raw projections while VOR used adjusted points (2026-09-04).
+    """
+    from core.model.replacement import replacement_baseline
+    from core.model.vor import vor_for
+
+    # Adjusted points: every player discounted differently, as availability does.
+    adjusted = {p.espn_id: p.proj_season * (0.6 + (p.espn_id % 5) * 0.1) for p in pool}
+    baseline = replacement_baseline(pool, settings, points_of=adjusted)
+
+    for pos, base in baseline.items():
+        at_pos = sorted((p for p in pool if p.pos is pos),
+                        key=lambda p: -adjusted[p.espn_id])
+        rank = min(replacement_rank(pos, settings), len(at_pos))
+        replacement_player = at_pos[rank - 1]
+        assert vor_for(adjusted[replacement_player.espn_id], pos, baseline) == 0.0, (
+            f"{pos.value}: the replacement player scored "
+            f"{vor_for(adjusted[replacement_player.espn_id], pos, baseline)}, not 0"
+        )
+        assert base == adjusted[replacement_player.espn_id]

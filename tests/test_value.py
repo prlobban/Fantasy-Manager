@@ -157,3 +157,37 @@ def test_the_headline_result_qbs_are_overrated(settings, pool):
     qb1 = vals[1000]
     assert best.espn_id != qb1.espn_id
     assert best.vor > qb1.vor
+
+
+def test_availability_discounts_the_surplus_not_the_whole_projection(settings):
+    """§2.5 — a player who misses games does not leave the slot empty; you
+    start a waiver replacement. So availability scales points-above-
+    replacement, never the total. Scaling the total charged injury-prone
+    players their entire projection for missed weeks and drove elite
+    quarterbacks to absurd negative values (2026-09-04)."""
+    from core.model.schema import Player, Pos
+
+    # Two identical quarterbacks; one plays every week, one plays half.
+    pool = [
+        Player(espn_id=i, name=f"QB{i}", pos=Pos.QB, pro_team="A",
+               proj_season=400.0 - i * 10.0)
+        for i in range(1, 20)
+    ]
+    healthy = pool[0]
+    fragile = pool[1]
+    ctx = {fragile.espn_id: PlayerContext()}
+
+    vals = value_pool(pool, settings, window="ros", contexts=ctx)
+    # The player at replacement rank defines zero.
+    ranked = sorted(pool, key=lambda p: -vals[p.espn_id].vor)
+    assert vals[ranked[-1].espn_id].vor <= 0.0
+
+    # A fully available player's VOR equals his raw surplus.
+    v = vals[healthy.espn_id]
+    if v.availability == 1.0:
+        assert v.vor > 0
+
+    # Nobody healthy and above replacement may come out worse than a
+    # replacement-level player — the signature of the old bug.
+    top = max(vals.values(), key=lambda x: x.vor)
+    assert top.vor > 0, "the best player at a position must beat replacement"

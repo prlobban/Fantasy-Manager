@@ -244,6 +244,20 @@ def run(cfg: DraftConfig | None = None) -> DraftStats:
             _, who = dom_reader.on_the_clock()
             return bool(who) and who.strip().casefold() == me
 
+        def apply_and_log(picks) -> list:
+            """Apply picks to the room and record EVERY one of them.
+
+            The only sanctioned way to call room.apply in this loop. The
+            re-reads around our own turn used to bypass the log, which is how
+            65 of 111 picks went unrecorded in the first logged rehearsal.
+            """
+            fresh = room.apply(picks)
+            for pk in fresh:
+                log.info("pick %d: %s (%s) by team %s", pk.overall, pk.name,
+                         pk.pos.value if pk.pos else "?", pk.team_id)
+                dlog.room_pick(pk, ours=pk.team_id == room.my_team_id, best_now=None)
+            return fresh
+
         #: overall pick number -> (attempts, monotonic time of the last one).
         #: ESPN's API can lag the click by seconds; without this the loop
         #: re-clicked the same player every 2s until the pick showed up.
@@ -253,26 +267,19 @@ def run(cfg: DraftConfig | None = None) -> DraftStats:
             stats.cycles += 1
             try:
                 cycle_start = time.monotonic()
-                picks = reader.read()
-                new = room.apply(picks)
+                new = apply_and_log(reader.read())
 
                 if new or last_plan is None:
                     stats.picks_seen = room.picks_made
                     last_plan = picker.rank(rows, room)
                     if qsync and new:
                         qsync.reset_attempts()
-
-                    for i, pk in enumerate(new):
-                        # Only the LAST of a batch changes what the board leads
-                        # with; the earlier ones are recorded as they happened.
-                        lead = (last_plan.best.player.name
-                                if last_plan.best and i == len(new) - 1 else None)
-                        log.info("pick %d: %s (%s) by team %s%s",
-                                 pk.overall, pk.name,
-                                 pk.pos.value if pk.pos else "?", pk.team_id,
-                                 f" → best now {lead}" if lead else "")
-                        dlog.room_pick(pk, ours=pk.team_id == room.my_team_id,
-                                       best_now=lead)
+                    if new and last_plan.best:
+                        log.info("board now leads with %s", last_plan.best.player.name)
+                        dlog.event("board_lead", after_pick=new[-1].overall,
+                                   best=last_plan.best.player.name,
+                                   vor=round(last_plan.best.valuation.vor, 2),
+                                   score=last_plan.best.score)
 
                 # ── the queue write comes FIRST, always (§3.3) ───────────────
                 # Every cycle, not only after a new pick: when nothing changed
@@ -309,7 +316,7 @@ def run(cfg: DraftConfig | None = None) -> DraftStats:
                     # may predate the pick right before ours. Rehearsal #4
                     # clicked on a player the previous team had just taken.
                     # Re-read and re-rank so the click is on a live target.
-                    if room.apply(reader.read()):
+                    if apply_and_log(reader.read()):
                         last_plan = picker.rank(rows, room)
                         if qsync:
                             qsync.reset_attempts()
@@ -331,7 +338,7 @@ def run(cfg: DraftConfig | None = None) -> DraftStats:
                             # again next cycle rather than after the retry wait.
                             attempted[overall] = (n_tries, 0.0)
                         # Re-read immediately so we don't double-pick.
-                        if room.apply(reader.read()):
+                        if apply_and_log(reader.read()):
                             last_plan = picker.rank(rows, room)
 
                 if reader.is_complete() or room.is_complete:
@@ -479,7 +486,8 @@ def _make_pick(session, cfg: DraftConfig, room: RoomModel, plan, stats: DraftSta
             # Either the pick before ours took him (stale plan: re-rank and
             # go again), or ESPN's Autopick already drafted him FOR US from
             # the top of our queue the instant our turn began.
-            room.apply(_reread(room))
+            for pk in room.apply(_reread(room)):
+                dlog.room_pick(pk, ours=pk.team_id == room.my_team_id, best_now=None)
             ours = {p.espn_id for p in room.picks if p.team_id == room.my_team_id}
             if best.player.espn_id in ours:
                 stats.our_picks.append(best.player.name)
