@@ -35,6 +35,11 @@ class PlayerContext:
     #: Agent's bounded pre-draft news override (§3.2). Applied last, capped.
     news_override: float | None = None
     news_reason: str | None = None
+    #: Research veto (§3.2) — season-ending injury, long suspension, retired,
+    #: unsigned. Joins the §2.5 veto list rather than being a second mechanism,
+    #: so there is one answer to "is this player draftable at all" and one
+    #: place that answer is enforced.
+    news_veto: str | None = None
 
 
 def _clamp_override(raw: float, cap: float) -> float:
@@ -84,6 +89,8 @@ def value_one(
         weeks_remaining=weeks_remaining,
         current_week=current_week,
     )
+    if ctx.news_veto:
+        dur.vetoes.append(f"research: {ctx.news_veto}")
     missing.extend(dur.missing)
     components.update({f"dur.{k}": v for k, v in dur.components.items()})
 

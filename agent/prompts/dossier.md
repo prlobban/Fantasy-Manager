@@ -35,6 +35,13 @@ information.
 not scoring players. If you are unsure, send 1.0 and say why in
 `projection_check`.
 
+**`multiplier` and `projection_check.direction` must agree, and this is checked
+in code.** `fair` means 1.0 — exactly. `high` means the projection is too
+generous, so the multiplier is **below** 1.0. `low` means it is too stingy, so
+the multiplier is **above** 1.0. If your prose argues that no adjustment is
+warranted, send 1.0; writing the argument and then moving the number anyway
+gets the number thrown away and wastes the run.
+
 ## The veto
 
 `veto: true` means **this player should not be on our roster at any price.**

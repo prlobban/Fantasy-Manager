@@ -45,8 +45,23 @@ def _token() -> str | None:
         return None
 
 
-def notify(level: str, title: str, body: str = "", *, receipt: str | None = None) -> bool:
-    """Post to #fantasy. Returns whether it landed."""
+def notify(level: str, title: str, body: str | None = "", *,
+           receipt: str | None = None, thread_ts: str | None = None) -> str | None:
+    """Post to #fantasy. Returns the message timestamp, or None.
+
+    The timestamp is what makes threading possible: pass it back as
+    `thread_ts` and the next post is a reply instead of another top-level
+    message. A draft produces 110+ opponent picks, and a channel that scrolls
+    that fast is a channel nobody reads (§3.8).
+
+    Still falsy on failure, so `if notify(...)` reads exactly as it did when
+    this returned a bool.
+
+    `body=None` is accepted and treated as empty. It used to raise here —
+    inside a function whose contract is that it never does — which killed the
+    research pass after it had already done all its work.
+    """
+    body = body or ""
     icon = LEVEL_ICON.get(level, "")
     text = f"{icon}*{title}*"
     if body:
@@ -61,12 +76,13 @@ def notify(level: str, title: str, body: str = "", *, receipt: str | None = None
     cfg = settings()
     token = _token()
     if not token or not cfg.slack_channel_id:
-        return False
+        return None
 
     try:
-        data = urllib.parse.urlencode(
-            {"channel": cfg.slack_channel_id, "text": text}
-        ).encode()
+        fields = {"channel": cfg.slack_channel_id, "text": text}
+        if thread_ts:
+            fields["thread_ts"] = thread_ts
+        data = urllib.parse.urlencode(fields).encode()
         req = urllib.request.Request(
             "https://slack.com/api/chat.postMessage",
             data=data,
@@ -76,8 +92,8 @@ def notify(level: str, title: str, body: str = "", *, receipt: str | None = None
             resp = json.loads(r.read().decode())
         if not resp.get("ok"):
             log.warning("slack rejected the message: %s", resp.get("error"))
-            return False
-        return True
+            return None
+        return resp.get("ts")
     except Exception as e:
         log.warning("slack notify failed: %s", e)
-        return False
+        return None

@@ -49,6 +49,45 @@ draft:
   # Board is stale if older than this (hours) at draft time.
   board_max_age_hours: 3
 
+research:
+  # §3.2 — ADP-ordered players to research. Not "everyone reachable" (~170 at
+  # our slot): research where the decision is expensive. Picks 4-57 are rounds
+  # 1-6 and the pool in reach there is ADP 1-90. Rounds 7-13 are bench flyers
+  # and a kicker, where §3.7 already forbids the only genuinely bad move.
+  pool_size: 80
+
+  # Parallel `claude -p` processes. Measured 2026-09-04: 27.6s median per
+  # dossier, so 80 players is ~6 min at 6 workers. Lower it if the plan's rate
+  # limit is unknown — the pass resumes, so a limit hit costs a wait, not a
+  # restart.
+  workers: 6
+
+  # A dossier older than this is ignored at board build. One night plus the
+  # morning, no more: a stale dossier is worse than none, because it reads as
+  # current.
+  max_age_hours: 30
+
+  # The post-order-lock refresh, by current VOR.
+  refresh_top: 15
+
+judge:
+  # §3.10 — Pearce's gate, 2026-09-04. The budget is the SMALLER of this and
+  # the observed pace, because opponents do not use their clock: 7 picks at 90s
+  # is 10.5 min, but 7 picks at 20s is 2.3 min.
+  max_budget_s: 300
+  # Below this, skip the turn and let the math draft. A judge run that cannot
+  # finish is a judge run that spends tokens for nothing.
+  min_budget_s: 60
+  # Fraction of (picks_until_next x observed pace) we allow ourselves.
+  pace_safety: 0.5
+  # Room picks the observed-pace median is taken over.
+  pace_window: 8
+  # The levers, hard-capped in code (core/draft/verdict.py).
+  max_vetoes_per_turn: 2
+  max_reorders_per_turn: 2
+  # Top-N of the PickPlan the judge may act on. Anything outside is invisible.
+  candidates: 15
+
 lineup:
   # §4.2 — projected margin thresholds that switch us to floor / ceiling.
   floor_margin_pts: 12

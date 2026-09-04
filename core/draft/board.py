@@ -4,9 +4,11 @@ The 90-second clock means the live loop re-sorts a table it already has; it does
 not think (§3.2, §8.7). Everything expensive — ESPN pool, nflverse history,
 durability, VOR, tiers — happens here, once, and is written to data/board.json.
 
-The agent's news pass (agent/prompts/predraft.md) writes data/overrides.json,
-which this module applies on a second run. Overrides are bounded by
-priors.model.override_cap so a model can nudge the board, never rewrite it.
+The research pass (agent/research.py -> core/draft/dossiers.py) writes
+data/overrides.json, which this module applies on a second run. Overrides are
+bounded by priors.model.override_cap so a model can nudge the board, never
+rewrite it; a veto is the one exception and carries a much higher evidence bar,
+enforced in dossiers.validate before it ever reaches this file.
 """
 
 from __future__ import annotations
@@ -149,8 +151,14 @@ def _apply_overrides(
         ctx = contexts.setdefault(pid, PlayerContext())
         ctx.news_override = mult
         ctx.news_reason = str(item.get("reason", ""))[:400]
+        if item.get("veto"):
+            # §3.2 — a research veto removes the player from the board, the
+            # same way a §2.5 suspension does. The evidence bar for earning
+            # one is enforced in core.draft.dossiers.validate, not here.
+            ctx.news_veto = str(item.get("reason") or "research veto")[:400]
         n += 1
-    log.info("applied %d news overrides", n)
+    log.info("applied %d news overrides (%d vetoes)",
+             n, sum(1 for i in items if isinstance(i, dict) and i.get("veto")))
     return n
 
 
