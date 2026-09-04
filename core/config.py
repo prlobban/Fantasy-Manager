@@ -43,6 +43,7 @@ class Settings:
     draft_at: datetime | None
     claude_bin: str
     claude_model: str
+    claude_research_model: str
     agent_max_turns: int
 
     log_level: str
@@ -75,12 +76,18 @@ class Settings:
     def agent_runs_dir(self) -> Path:
         return self.data_dir / "agent-runs"
 
+    @property
+    def dossiers_dir(self) -> Path:
+        """§3.2 — one research record per player, plus the usage ledger."""
+        return self.data_dir / "dossiers"
+
     def ensure_dirs(self) -> None:
         for d in (
             self.data_dir,
             self.cache_dir,
             self.screenshot_dir,
             self.agent_runs_dir,
+            self.dossiers_dir,
         ):
             d.mkdir(parents=True, exist_ok=True)
 
@@ -124,6 +131,10 @@ def settings(reload: bool = False) -> Settings:
         draft_at=draft_at,
         claude_bin=os.environ.get("CLAUDE_BIN", "claude"),
         claude_model=os.environ.get("CLAUDE_MODEL", "claude-opus-5"),
+        # §10 — the research pass is bulk retrieval, not judgment, and it is the
+        # one workload big enough to threaten a rate-limit window. Sonnet by
+        # default; the judge and the manager stay on claude_model.
+        claude_research_model=os.environ.get("CLAUDE_RESEARCH_MODEL", "claude-sonnet-5"),
         agent_max_turns=int(os.environ.get("AGENT_MAX_TURNS", "12")),
         log_level=os.environ.get("LOG_LEVEL", "INFO"),
     )

@@ -13,6 +13,7 @@ them.
 from __future__ import annotations
 
 import logging
+from datetime import UTC, datetime
 from typing import Any
 
 from core.espn import league_state as ls_mod
@@ -43,12 +44,34 @@ def _player_row(p, v) -> dict[str, Any]:
     }
 
 
+def dossier_packet(player, val, *, adp: float | None = None) -> dict[str, Any]:
+    """§3.2 — one player, for one research agent.
+
+    Deliberately tiny. This packet is sent once per player in the pool, and
+    every field in it is paid for on every turn of that agent's loop. It
+    carries what the researcher needs to know who he is and what the model
+    currently believes — nothing about the draft, the league, or us.
+    """
+    row = _player_row(player, val)
+    row["adp"] = adp if adp is not None else player.espn_adp
+    return {
+        "task": "dossier",
+        "as_of": datetime.now(UTC).date().isoformat(),
+        "player": row,
+        "what_the_model_believes": (
+            f"ESPN projects {row['proj']} points; the engine values him at "
+            f"{row['vor']} over replacement, tier {row['tier']}, with an "
+            f"availability discount of {row['availability']}."
+        ),
+    }
+
+
 def build(task: str, state: ls_mod.LeagueState | None = None,
           *, scope: str = "all") -> dict[str, Any]:
     """`scope` narrows a daily run: "lineup" (the Sunday pass) omits the
     waiver plan and tells the agent to leave waivers and trades alone."""
     st = state or ls_mod.snapshot()
-    window = "ros" if task == "predraft" else "week"
+    window = "week"
     vals = value_pool(
         st.all_players(),
         st.facts.settings,
@@ -183,19 +206,6 @@ def build(task: str, state: ls_mod.LeagueState | None = None,
                         for c, why in wplan.skipped[:10]],
             "notes": wplan.notes,
         }
-
-    if task == "predraft":
-        from core.draft import board as board_mod
-
-        try:
-            bd = board_mod.load()
-            packet["board_top"] = [
-                {**_player_row(p, v), "adp": p.espn_adp}
-                for p, v in bd.rows[:120]
-            ]
-            packet["board_coverage"] = bd.coverage
-        except Exception as e:
-            packet["board_error"] = str(e)
 
     return packet
 

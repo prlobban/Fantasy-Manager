@@ -34,11 +34,60 @@ MCP_CONFIG = REPO_ROOT / "agent" / "mcp.json"
 PLAYBOOK = REPO_ROOT / "docs" / "fantasy-playbook.md"
 PRIORS = REPO_ROOT / "priors.yaml"
 
-TASKS = {
-    "daily": ("daily.md", "actions.json"),
-    "predraft": ("predraft.md", "overrides.json"),
-    "tuesday": ("tuesday.md", "review.json"),
-    "incoming_trade": ("incoming_trade.md", "actions.json"),
+@dataclass(frozen=True)
+class TaskSpec:
+    """One agent task and the capability surface it gets.
+
+    Per-task rather than global, because the surfaces genuinely differ: the
+    manager tasks need `core`'s write table and the doctrine that governs it,
+    a researcher needs the web and must NOT be able to reach a write, and a
+    judge needs the doctrine and no tools at all.
+    """
+
+    prompt: str
+    schema: str
+    #: Exact --allowedTools value. "" means no tools at all.
+    tools: str
+    #: True → launch core's MCP server and allow it. False → no MCP whatsoever.
+    mcp: bool
+    #: True → system.md + the playbook + priors are prepended. False → the task
+    #: brief stands alone. See build_system_prompt.
+    doctrine: bool
+    max_turns: int | None = None   # None → cfg.agent_max_turns
+    #: "research" → cfg.claude_research_model. None → cfg.claude_model.
+    model: str | None = None
+
+
+TASKS: dict[str, TaskSpec] = {
+    "daily": TaskSpec("daily.md", "actions.json", "mcp__fantasy__*", True, True),
+    "tuesday": TaskSpec("tuesday.md", "review.json", "mcp__fantasy__*", True, True),
+    "incoming_trade": TaskSpec(
+        "incoming_trade.md", "actions.json", "mcp__fantasy__*", True, True),
+
+    # §3.2 — one research agent per player. The web, and nothing else: with no
+    # MCP config it cannot reach set_lineup or any other write, by absence
+    # rather than by instruction.
+    #
+    # WebFetch is withheld deliberately. Every turn of an agentic loop re-sends
+    # the whole conversation, so a fetched article (5-15k tokens) is paid for
+    # again on every remaining turn. Search snippets answer what this task asks.
+    #
+    # The playbook is NOT inlined: ~8k tokens x max_turns x every player in the
+    # pool exceeds the entire research budget, spent telling a researcher rules
+    # it does not apply. This is the difference between the pass fitting a
+    # rate-limit window and not.
+    # max_turns must be (searches + 2): one turn to issue each search, one to
+    # receive the last result, one to write the JSON. Measured 2026-09-04 at 4:
+    # the run made 4 searches and died on `max_turns` with the dossier unwritten,
+    # having spent the whole $0.36 anyway. A budget that stops one turn short of
+    # the answer pays full price for nothing.
+    "dossier": TaskSpec(
+        "dossier.md", "dossier.json", "WebSearch", False, False,
+        max_turns=8, model="research"),
+
+    # §3.10 — judgment between our turns. Reads a packet, returns JSON. It gets
+    # the doctrine (it cites sections) and no tools whatsoever.
+    "judge": TaskSpec("judge.md", "verdict.json", "", False, True, max_turns=1),
 }
 
 
@@ -50,23 +99,37 @@ class AgentResult:
     raw: str
     error: str | None = None
     transcript: Path | None = None
+    #: Token accounting straight from the CLI envelope — this is what sets the
+    #: research budget (§10.3) instead of an estimate.
+    usage: dict | None = None
 
 
 def build_system_prompt(task: str) -> str:
-    """system.md + the FULL playbook + the current priors + the task brief.
+    """The task brief, preceded by the doctrine for tasks that decide.
 
     Rebuilt on every invocation so the prompt cannot drift from the doctrine on
     disk. If someone edits §4.2, the next run uses the new §4.2.
+
+    Tasks that DECIDE get system.md + the playbook + priors: they cite sections
+    and a paraphrase is how a rule quietly changes. Tasks that only RESEARCH
+    get neither — system.md tells the reader it manages a live team and that
+    its tools are the §8.2 write table, which is false for a researcher and
+    exactly the wrong frame. It also costs ~8k tokens per turn per player,
+    which is the difference between the pass fitting a rate-limit window
+    and not.
     """
-    parts = [
-        (PROMPTS / "system.md").read_text(encoding="utf-8"),
-        "\n# THE PLAYBOOK (authoritative — cite these sections)\n\n",
-        PLAYBOOK.read_text(encoding="utf-8"),
-        "\n\n# CURRENT THRESHOLDS (priors.yaml)\n\n```yaml\n",
-        PRIORS.read_text(encoding="utf-8"),
-        "\n```\n\n# THIS RUN\n\n",
-        (PROMPTS / TASKS[task][0]).read_text(encoding="utf-8"),
-    ]
+    spec = TASKS[task]
+    parts: list[str] = []
+    if spec.doctrine:
+        parts += [
+            (PROMPTS / "system.md").read_text(encoding="utf-8"),
+            "\n# THE PLAYBOOK (authoritative — cite these sections)\n\n",
+            PLAYBOOK.read_text(encoding="utf-8"),
+            "\n\n# CURRENT THRESHOLDS (priors.yaml)\n\n```yaml\n",
+            PRIORS.read_text(encoding="utf-8"),
+            "\n```\n\n# THIS RUN\n\n",
+        ]
+    parts.append((PROMPTS / spec.prompt).read_text(encoding="utf-8"))
     return "".join(parts)
 
 
@@ -105,15 +168,41 @@ def _validate(payload: dict, task: str) -> list[str]:
                 # §8.2a — an uncited action is rejected, not fixed up.
                 problems.append(f"action {i}: no § citation")
 
-    if task == "predraft":
-        for i, o in enumerate(payload.get("overrides", [])):
-            m = o.get("multiplier")
-            if not isinstance(m, int | float) or not (0.85 <= m <= 1.15):
-                problems.append(f"override {i}: multiplier {m} outside the allowed band")
-            if not o.get("source"):
-                problems.append(f"override {i}: no source")
+    if task == "dossier":
+        # Only the rules a JSON Schema cannot state. The URL/confidence rules
+        # that decide whether a dossier may MOVE the board live in
+        # core.draft.dossiers.validate — this layer just refuses a reply that
+        # is not a dossier at all.
+        if not payload.get("espn_id"):
+            problems.append("no espn_id")
+        m = payload.get("multiplier")
+        if not isinstance(m, int | float) or not (0.85 <= m <= 1.15):
+            problems.append(f"multiplier {m} outside the allowed band")
+        if payload.get("veto") and not payload.get("veto_reason"):
+            problems.append("veto with no veto_reason")
 
     return problems
+
+
+def _usage(raw: str) -> dict | None:
+    """Token accounting out of the `claude -p --output-format json` envelope.
+
+    §10.3 — the research budget is set from measurement, not estimate, and
+    this is where the measurement comes from. Shape-tolerant on purpose: a CLI
+    that renames a field should cost us the numbers, never the run.
+    """
+    try:
+        outer = json.loads(raw)
+    except (json.JSONDecodeError, TypeError):
+        return None
+    if not isinstance(outer, dict):
+        return None
+    u = outer.get("usage")
+    out: dict = dict(u) if isinstance(u, dict) else {}
+    for k in ("num_turns", "duration_ms", "duration_api_ms", "total_cost_usd"):
+        if k in outer:
+            out[k] = outer[k]
+    return out or None
 
 
 def run(task: str, packet: dict, *, dry_run: bool = False,
@@ -129,26 +218,42 @@ def run(task: str, packet: dict, *, dry_run: bool = False,
     sys_prompt_path = run_dir / f"{stamp}-{task}-system.md"
     sys_prompt_path.write_text(build_system_prompt(task), encoding="utf-8")
 
-    schema_path = SCHEMAS / TASKS[task][1]
-    mcp_config = _write_mcp_config(run_dir / f"{stamp}-mcp.json")
+    spec = TASKS[task]
+    # --json-schema takes the schema INLINE, not a path. Passing a path made
+    # the CLI try to parse "C:\Users\..." as JSON and exit 1 before spending a
+    # token — which is how this was found, and why no agent task had ever run.
+    schema_json = json.dumps(
+        json.loads((SCHEMAS / spec.schema).read_text(encoding="utf-8")),
+        separators=(",", ":"),
+    )
     user_msg = (
         "Situation packet follows as JSON. Every number you need is in it or "
         "behind a get_* tool. Do not recompute anything.\n\n"
         f"```json\n{json.dumps(packet, indent=1, default=str)}\n```"
     )
 
+    model = cfg.claude_research_model if spec.model == "research" else cfg.claude_model
     cmd = [
         cfg.claude_bin, "-p", user_msg,
         "--system-prompt-file", str(sys_prompt_path),
         "--output-format", "json",
-        "--json-schema", str(schema_path),
-        "--mcp-config", str(mcp_config),
-        "--strict-mcp-config",
-        "--allowedTools", "mcp__fantasy__*",
-        "--max-turns", str(cfg.agent_max_turns),
-        "--model", cfg.claude_model,
+        "--json-schema", schema_json,
+        "--max-turns", str(spec.max_turns or cfg.agent_max_turns),
+        "--model", model,
         "--permission-mode", "bypassPermissions",
     ]
+
+    # --strict-mcp-config on EVERY task, with --mcp-config only where the task
+    # is supposed to have tools. Without the strict flag a user-level MCP
+    # config on the box would silently hand a researcher the whole write
+    # table. With it and no --mcp-config, the task gets zero servers.
+    cmd += ["--strict-mcp-config"]
+    if spec.mcp:
+        cmd += ["--mcp-config", str(_write_mcp_config(run_dir / f"{stamp}-mcp.json"))]
+    if spec.tools:
+        cmd += ["--allowedTools", spec.tools]
+    else:
+        cmd += ["--disallowedTools", "*"]
 
     if dry_run:
         log.info("DRY RUN — would invoke: %s", " ".join(cmd[:2] + ["<packet>"] + cmd[3:]))
@@ -167,6 +272,10 @@ def run(task: str, packet: dict, *, dry_run: bool = False,
     transcript.write_text(raw + ("\n--- stderr ---\n" + proc.stderr if proc.stderr else ""),
                           encoding="utf-8")
 
+    # Usage is read before any early return: a run that failed still spent the
+    # tokens, and a budget built only from successes understates itself.
+    usage = _usage(raw)
+
     # The support agent learned this the hard way: claude can print a capacity
     # notice and still exit 0. Sniff the output, don't trust the exit code.
     lowered = raw.lower()
@@ -174,26 +283,27 @@ def run(task: str, packet: dict, *, dry_run: bool = False,
                    "overloaded"):
         if marker in lowered:
             return AgentResult(False, task, None, raw,
-                               error=f"capacity: {marker}", transcript=transcript)
+                               error=f"capacity: {marker}", transcript=transcript,
+                               usage=usage)
 
     if proc.returncode != 0:
         return AgentResult(False, task, None, raw,
                            error=f"claude exited {proc.returncode}: {proc.stderr[:300]}",
-                           transcript=transcript)
+                           transcript=transcript, usage=usage)
 
     payload = _extract(raw)
     if payload is None:
         return AgentResult(False, task, None, raw,
                            error="could not parse a JSON result from claude's output",
-                           transcript=transcript)
+                           transcript=transcript, usage=usage)
 
     problems = _validate(payload, task)
     if problems:
         return AgentResult(False, task, payload, raw,
                            error="output failed validation: " + "; ".join(problems),
-                           transcript=transcript)
+                           transcript=transcript, usage=usage)
 
-    return AgentResult(True, task, payload, raw, transcript=transcript)
+    return AgentResult(True, task, payload, raw, transcript=transcript, usage=usage)
 
 
 def _extract(raw: str) -> dict | None:
