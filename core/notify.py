@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import urllib.parse
 import urllib.request
 from pathlib import Path
@@ -61,6 +62,17 @@ def notify(level: str, title: str, body: str | None = "", *,
     inside a function whose contract is that it never does — which killed the
     research pass after it had already done all its work.
     """
+    # A test must never reach the live channel. The judge tests call
+    # consult_judge() for real, which posts a shadow diff, and running the
+    # suite on the box — where the token DOES resolve — put two junk "Shadow ·
+    # pick 17" messages into #fantasy on 2026-09-04. pytest sets
+    # PYTEST_CURRENT_TEST for every test it runs, so this needs no cooperation
+    # from the tests themselves, which is the point: the guard has to hold for
+    # tests nobody remembered to check.
+    if os.environ.get("PYTEST_CURRENT_TEST") or os.environ.get("FANTASY_NO_NOTIFY"):
+        log.debug("notify suppressed (test context): [%s] %s", level, title)
+        return None
+
     body = body or ""
     icon = LEVEL_ICON.get(level, "")
     text = f"{icon}*{title}*"

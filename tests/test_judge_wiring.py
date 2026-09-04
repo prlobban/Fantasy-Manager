@@ -219,3 +219,29 @@ def test_a_vetoing_judge_never_produces_an_illegal_roster():
     # §3.7 — our roster obeys ESPN's position caps despite the vetoing.
     for pos, n in room.my_positions.items():
         assert n <= caps.get(pos, 99), f"{pos.value}: {n} over cap {caps.get(pos)}"
+
+
+def test_the_test_suite_cannot_post_to_the_live_channel(monkeypatch, tmp_path):
+    """Running this suite on the box put two junk 'Shadow · pick 17' messages
+    into #fantasy on 2026-09-04, because consult_judge posts a shadow diff for
+    real and the box is where the Slack token actually resolves.
+
+    The guard keys off PYTEST_CURRENT_TEST so it needs no cooperation from the
+    tests themselves — including the ones nobody thought to check.
+    """
+    import os
+
+    from core import notify as N
+
+    assert os.environ.get("PYTEST_CURRENT_TEST"), "pytest should set this"
+
+    posted = []
+    monkeypatch.setattr(N.urllib.request, "urlopen",
+                        lambda *a, **k: posted.append(a) or (_ for _ in ()).throw(
+                            AssertionError("a test reached the network")))
+    assert N.notify("info", "should not post", "body") is None
+
+    # And through the real path the judge tests use.
+    V.write(tmp_path, 17, a_verdict())
+    consult_judge(a_plan(), mode="shadow", draft_dir=tmp_path, overall=17)
+    assert posted == []
