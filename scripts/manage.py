@@ -99,9 +99,12 @@ def main() -> int:
         print("FAILED:", "; ".join(h.failures))
         return 1
 
-    if not kill_switch.is_on() and not args.dry_run:
-        print(f"kill switch is off ({kill_switch.state()[:80]}) — read-only")
-        args.dry_run = True
+    # Read-and-report: with the switch off the agent still runs and still
+    # posts, and every write is refused at the gate (§8.4). That is Monday's
+    # test mode. `--dry-run` only stops a health failure flipping the switch.
+    read_only = not kill_switch.is_on()
+    if read_only:
+        print(f"kill switch is off ({kill_switch.state()[:80]}) — every write will be refused")
 
     task = "tuesday" if args.tuesday else "daily"
     st = league_state.snapshot()
@@ -119,13 +122,11 @@ def main() -> int:
     if args.no_agent:
         return 0
 
-    res = agent_run.run(task, packet, dry_run=args.dry_run)
+    res = agent_run.run(task, packet)
     if not res.ok:
         print(f"\nAGENT FAILED: {res.error}")
         notify("error", "Fantasy manager: agent run failed", str(res.error)[:400])
         return 1
-    if res.output is None:          # dry-run of the invocation itself
-        return 0
 
     out = res.output
     print("\nAGENT")
@@ -150,7 +151,7 @@ def main() -> int:
                 f"• {a.get('tool')}: {a.get('reason')}" for a in out["actions"])
         elif out.get("no_action_reason"):
             body += f"\n\nno action: {out['no_action_reason']}"
-        notify("info", f"Week {st.week} sweep" + (" (DRY RUN)" if args.dry_run else ""),
+        notify("info", f"Week {st.week} sweep" + (" (READ-ONLY, switch off)" if read_only else ""),
                body[:2800])
 
     if esc := (out.get("escalate") or "").strip():

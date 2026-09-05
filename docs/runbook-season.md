@@ -51,9 +51,8 @@ off by itself.
 
 ```
 ./.venv/bin/python scripts/research_week.py            # this morning's dossiers (resumes)
-./.venv/bin/python scripts/manage.py --dry-run --no-agent   # core's plan, no model, no writes
-./.venv/bin/python scripts/manage.py --dry-run         # + the agent's decisions, no writes
-./.venv/bin/python scripts/manage.py                   # live (respects ENABLED)
+./.venv/bin/python scripts/manage.py --no-agent        # core's plan, no model, no writes
+./.venv/bin/python scripts/manage.py                   # the sweep; ENABLED=off = agent runs, every write refused
 ./.venv/bin/python scripts/manage.py --tuesday         # the review
 ./.venv/bin/python scripts/manage.py --task lineup     # lineup only
 tail -f data/manager.log                               # everything cron did

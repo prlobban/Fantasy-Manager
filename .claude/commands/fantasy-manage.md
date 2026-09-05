@@ -35,13 +35,12 @@ the laptop.
 
 ```
 python scripts/research_week.py --roster        # cheap: our 13 only
-python scripts/manage.py --dry-run --no-agent   # core's plan, no model, no writes
-python scripts/manage.py --dry-run              # + the agent, no writes
-python scripts/manage.py                        # live, respects ENABLED
+python scripts/manage.py --no-agent             # core's plan, no model, no writes
+python scripts/manage.py                        # the sweep; ENABLED=off = agent runs, writes refused
 python scripts/manage.py --tuesday              # the §7 review
 ```
 
-Start with `--dry-run --no-agent`. If core's plan looks wrong, the agent cannot
+Start with `--no-agent`. If core's plan looks wrong, the agent cannot
 fix it and the bug is in `core`.
 
 ## Reading what it did
