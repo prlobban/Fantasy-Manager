@@ -163,8 +163,14 @@ plausible story:
 - *Not VOR.* A seat drafting raw VOR order does worse (−80) than the full picker
   (−58); replacement-level subtraction is worth **+53**.
 - *Not injury history.* Off: −46.0. On: −51.5. Both lose.
-- *Not early QB.* Deferring QBs makes it **worse** (−135). With 5 pts a passing
-  TD and no points for passing yards, the high QB valuation is correct.
+- *Not early QB.* Deferring QBs makes it **worse** (−135), so the high QB
+  valuation is correct.
+  > **Correction (2026-09-04).** The reason given here was wrong. This league
+  > DOES score passing yards — statId 8, 1 point per 25, which is the standard
+  > rate. For Josh Allen it is 157.0 of a 396.0 projection, his single largest
+  > component. The only unusual item is 5 points a passing TD instead of 4
+  > (+26.4 for Allen), which makes QBs worth MORE than standard, not less.
+  > The conclusion stands; the stated reason was backwards.
 - *Not the scorer or the bot.* Lineups verified slot by slot; both ESPN rankings
   verified to place 4–5 QBs in the top 50.
 

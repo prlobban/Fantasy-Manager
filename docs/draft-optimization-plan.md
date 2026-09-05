@@ -41,6 +41,20 @@ that it is wrong in principle. This league's scoring is unusual (5 points a pass
 **no points for passing yards**), which compresses the top of the QB board in a way
 generic reasoning about replacement level does not anticipate.
 
+> 🔴 **Correction (2026-09-04) — the premise above is FALSE.** This league scores
+> passing yards at statId 8, 1 point per 25 yards, which is the *standard* rate;
+> statId 3 is absent only because ESPN carries the bucketed item instead. Josh
+> Allen's projection decomposes as 157.0 from passing yards, 131.8 from passing
+> TDs — reproducing ESPN's 396.0 exactly. The one real oddity is 5 points a
+> passing TD rather than 4, worth +26.4 to Allen, which makes QBs MORE valuable
+> than standard, not compressed.
+>
+> The engine was never affected: it reads ESPN's `appliedTotal`, which always
+> included the item. Only this reasoning was wrong. Note where it led —
+> `vor_weight` became the pre-declared first hypothesis *because* of this false
+> premise, and the all-blocks gate rejected it on the evidence. A bad premise
+> produced a candidate and the measurement killed it.
+
 ---
 
 ## 1. The knob that follows from that
