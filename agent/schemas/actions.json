@@ -38,6 +38,7 @@
           "alternative": {"type": "string", "minLength": 20, "description": "D8.4 — what else was considered and why it lost."},
           "evidence": {"type": "string", "minLength": 20, "description": "D8.5 — the dossier fact, usage line or practice report, with its source."},
           "would_be_wrong_if": {"type": "string", "minLength": 15, "description": "D8.6 — the one thing that, if true, flips the call."},
+          "why_they_accept": {"type": "string", "description": "propose_trade only (D9): why THIS manager says yes — their hole, their bye crunch, their record, what they paid. Required for propose_trade; also passed as the tool argument."},
           "confidence": {"type": "number", "minimum": 0, "maximum": 1}
         }
       }

@@ -172,7 +172,8 @@ def value_pool(
     avail = ({p.espn_id: parts[p.espn_id][0].availability for p in live}
              if window == "ros" else None)
     vors = compute_vor(live, settings, points_of=points, week=week,
-                       availability_of=avail)
+                       availability_of=avail,
+                       weeks=1.0 if window == "week" else float(weeks_remaining))
     tiers = compute_tiers(live, vors)
 
     out: dict[int, Valuation] = {}

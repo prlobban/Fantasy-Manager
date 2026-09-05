@@ -57,6 +57,28 @@ def replacement_rank(pos: Pos, settings: LeagueSettings) -> int:
     return int(round(dedicated + flexed)) + 1
 
 
+def streaming_bonus(pos: Pos, settings: LeagueSettings, *, weeks: float) -> float:
+    """§2.3 / D6 — what streaming adds to replacement level at a one-starter
+    position, in points over `weeks`.
+
+    The rank-N+1 baseline is one player's average. Nobody starts that player
+    every week: at QB, TE, K and D/ST a manager starts the best MATCHUP off
+    the wire each week, and the max over a handful of free agents beats any
+    one of their averages. That gap is why the market drafts QBs and TEs
+    rounds later than season-total VOR says to — and why this engine took a
+    quarterback 12th overall and a rookie tight end 29th on 2026-09-05.
+    Priors per position, swept on the autopick benchmark.
+    """
+    if settings.starters_at(pos) != 1:
+        return 0.0
+    from core.model.priors import priors
+    try:
+        per_week = float(priors().get(f"model.streaming_bonus_per_week.{pos.name}"))
+    except KeyError:
+        return 0.0
+    return per_week * weeks
+
+
 def replacement_points(
     pos: Pos,
     pool: list[Player],
@@ -65,6 +87,7 @@ def replacement_points(
     projection: str = "proj_season",
     week: int | None = None,
     points_of: dict[int, float] | None = None,
+    weeks: float | None = None,
 ) -> float:
     """Projected points of the replacement-level player at `pos`.
 
@@ -98,7 +121,26 @@ def replacement_points(
 
     ranked = sorted(at_pos, key=proj, reverse=True)
     idx = min(replacement_rank(pos, settings), len(ranked)) - 1
-    return proj(ranked[idx])
+    base = proj(ranked[idx])
+
+    # In-season, at a one-starter position, replacement level is not "the
+    # 11th-best season total" — it is the best player sitting on the wire
+    # THIS week, because that is who you would actually start instead
+    # (D6, streaming). A pool that is still all unrostered (a draft board)
+    # has no wire, so the rank baseline stands.
+    if settings.starters_at(pos) == 1 and _in_season(at_pos, settings, pos):
+        free = [p for p in at_pos if p.on_team_id is None]
+        if free:
+            base = max(base, max(proj(p) for p in free))
+    if weeks is None:
+        weeks = 1.0 if week is not None else float(settings.regular_season_weeks)
+    return base + streaming_bonus(pos, settings, weeks=weeks)
+
+
+def _in_season(at_pos: list[Player], settings: LeagueSettings, pos: Pos) -> bool:
+    """True once the league has actually rostered its starters at `pos`."""
+    rostered = sum(1 for p in at_pos if p.on_team_id is not None)
+    return rostered >= settings.team_count * settings.starters_at(pos)
 
 
 def replacement_baseline(
@@ -107,15 +149,19 @@ def replacement_baseline(
     *,
     week: int | None = None,
     points_of: dict[int, float] | None = None,
+    weeks: float | None = None,
 ) -> dict[Pos, float]:
     """Replacement points for every position present in the pool.
 
     Pass `points_of` whenever you have adjusted points — see the note in
-    replacement_points about why the two must share a scale.
+    replacement_points about why the two must share a scale. `weeks` is the
+    window the points cover (1 for a week, the weeks remaining for ROS); it
+    scales the streaming bonus.
     """
     present = Counter(p.pos for p in pool)
     return {
-        pos: replacement_points(pos, pool, settings, week=week, points_of=points_of)
+        pos: replacement_points(pos, pool, settings, week=week, points_of=points_of,
+                                weeks=weeks)
         for pos in present
     }
 

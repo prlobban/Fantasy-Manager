@@ -31,6 +31,7 @@ dead is still a competent draft.
 | `docs/fantasy-doctrine.md` | the craft, D1–D8, sourced; inlined into every deciding agent run |
 | `docs/build-plan.md` | every file and why it exists |
 | `docs/*-plan.md` | the measurements: backtest, autopick benchmark, draft optimisation, projection model |
+| `docs/draft-post-mortem-2026.md` | why the 2026 draft graded 10th/10, what was measured, what the simulator cannot see |
 | `priors.yaml` | every tunable, each citing its § — nothing hardcodes a threshold |
 | `core/model/` | the valuation engine: projections → VOR → tiers → durability |
 | `core/draft/` | board, survival, room, picker, queue, judge verdicts, the loop |
@@ -56,7 +57,8 @@ ssh jarvis && cd ~/Fantasy-Manager          # the box (~/.ssh/config on the lapt
 | Practice draft, random seat | `scripts/practice.sh [slot]` |
 | **Draft day** | `scripts/draft_day.sh start\|status\|stop` |
 | Morning research (in-season) | `scripts/research_week.py` |
-| Daily sweep, no writes | `scripts/manage.py --dry-run --no-agent` |
+| Daily sweep (core's view only) | `scripts/manage.py --no-agent` |
+| Daily sweep (agent; `ENABLED=off` = writes refused) | `scripts/manage.py` |
 | Tuesday review | `scripts/manage.py --tuesday` |
 | Cron entry point | `scripts/cron_manage.sh research\|sweep\|tuesday\|lineup` |
 | Benchmark vs ESPN autopick | `scripts/benchmark.py` |

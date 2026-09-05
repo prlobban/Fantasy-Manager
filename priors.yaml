@@ -31,6 +31,25 @@ model:
   # PPR, because this league scores 0.5 a reception — and it measured better
   # than STANDARD (3.65 vs 4.22).
   market_rank_type: PPR
+  # How the consensus rank is mapped onto our points scale. 1 builds one
+  # ladder per position from ESPN's order WITHIN the position (the 3rd-ranked
+  # TE is worth our 3rd-best TE's points); 0 uses one cross-position ladder,
+  # which handed a TE ranked 42nd overall a running back's 42nd-place points
+  # and drafted Colston Loveland in round 3 (docs/draft-post-mortem-2026.md).
+  # Measured on the autopick benchmark, 2026-09-05 — see the post-mortem.
+  market_blend_by_position: 0
+
+  # §2.3 / D6 — points per week that streaming adds to replacement level at a
+  # ONE-starter position. The rank-N+1 baseline is one player's average; a
+  # manager streams the best matchup off the wire each week, and the max over
+  # a handful of free agents beats any one of their averages. Without this the
+  # engine drafted a QB 12th overall and a rookie TE 29th (2026-09-05). Swept on
+  # the autopick benchmark — see docs/draft-post-mortem-2026.md.
+  streaming_bonus_per_week:
+    QB: 0.0
+    TE: 0.0
+    K: 0.0
+    DST: 0.0
 
   # §P — our own opportunity-based projection (core/proj), blended into the
   # board the same way the consensus board is. 0.0 = inert: the model is built,
@@ -166,8 +185,14 @@ waivers:
   # §5.3.3 — never spend a claim this good on a one-week streamer.
   streamer_priority_floor: 3
 
-  # §5.5 — never drop a top-N player by ROS VOR.
+  # §5.5 — never drop a top-N player by ROS VOR. Enforced in the add_drop
+  # tool — the one waiver rule that is a refusal rather than a flag (D9).
   never_drop_top_n: 5
+
+  # D9 — how many candidates the agent sees, with flags attached: the best by
+  # this week's starting-lineup gain, plus the best stashes by ROS value.
+  candidates_shown: 20
+  upside_shown: 8
   # §5.5 — keep an injured player if he returns within this many weeks
   # AND a bench spot exists. With 4 bench spots it often will not.
   keep_injured_return_within_weeks: 4
@@ -184,6 +209,17 @@ trades:
   no_repropose_days: 14
   # §6.5 — never trade a top-N asset for a package of lesser parts.
   protected_top_n: 3
+
+  # D9 — the group-chat test as a number. Market value (core.model.market,
+  # from ADP decaying into ROS rank) they RECEIVE over what they GIVE. Below
+  # this an offer reads as a lowball and propose_trade refuses it; above it
+  # the agent's `why_they_accept` carries the offer. Our model's read of their
+  # lineup gain is advisory only — it graded Pitts-for-Irving as good for them.
+  min_market_ratio: 0.8
+  # Weeks over which ADP stops being the market and the ROS rank takes over.
+  market_adp_decay_weeks: 8
+  # Their best N by ROS VOR considered as targets, per team.
+  gettables_per_team: 8
 
   # §6.8 — the anti-fleece gauntlet on INCOMING offers.
   gauntlet:
@@ -225,6 +261,10 @@ research_week:
   # candidates by weekly gain and the trade targets core surfaced.
   waiver_candidates: 10
   trade_targets: 6
+  # D9 — the agent may research a player itself mid-sweep (research_player)
+  # when it wants to know about someone the morning pass skipped. Capped per
+  # run: each is a full web pass (~$0.25, ~40s).
+  on_demand_max: 6
   # A weekly dossier older than this is ignored. A practice report is a
   # same-day fact.
   max_age_hours: 20

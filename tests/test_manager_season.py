@@ -190,15 +190,133 @@ def test_a_surplus_tight_end_generates_an_idea_without_a_hole_on_their_side():
     assert "TE" in p.shape_effect
 
 
-def test_value_check_refuses_a_one_sided_offer():
+def test_value_check_refuses_a_lowball_by_market():
+    """D9: the group-chat test is a MARKET number now. Our model's read of
+    their lineup is advisory; what refuses the offer is that they would
+    receive a 150th pick for a 10th pick."""
+    ours = _roster_3te()
+    theirs = [pl(21, Pos.QB, 19), pl(23, Pos.RB, 13, espn_adp=10.0), pl(24, Pos.RB, 12),
+              pl(26, Pos.WR, 14), pl(27, Pos.WR, 11), pl(28, Pos.TE, 12)]
+    give = [next(p for p in ours if p.espn_id == 11)]     # our worst TE
+    give[0].espn_adp = 150.0
+    get = [next(p for p in theirs if p.espn_id == 23)]    # their RB1
+    v = _vals(ours + theirs, "ros")
+    ok, why, ours_gain, theirs_gain = trades_out.value_check(
+        ours, theirs, give, get, v, settings_10(), week=1)
+    assert not ok and "§6.3" in why and "market" in why
+    assert ours_gain > 0
+
+
+def test_their_model_gain_is_advisory_when_the_market_is_close():
+    """A market-even swap of two similar backs passes the gate even though our
+    model says their lineup gets slightly worse: that number is reported as
+    advisory, not enforced."""
     ours = _roster_3te()
     theirs = [pl(21, Pos.QB, 19), pl(23, Pos.RB, 13), pl(24, Pos.RB, 12),
-              pl(26, Pos.WR, 14), pl(27, Pos.WR, 11), pl(28, Pos.TE, 12)]
+              pl(26, Pos.WR, 14), pl(27, Pos.WR, 11), pl(28, Pos.TE, 12),
+              pl(29, Pos.RB, 10)]
     v = _vals(ours + theirs, "ros")
-    give = [next(p for p in ours if p.espn_id == 11)]     # our worst TE
-    get = [next(p for p in theirs if p.espn_id == 23)]    # their RB1
-    ok, why, *_ = trades_out.value_check(ours, theirs, give, get, v, settings_10())
-    assert not ok and "§6.3" in why
+    give = [next(p for p in ours if p.espn_id == 5)]      # our RB3, 8/wk
+    get = [next(p for p in theirs if p.espn_id == 29)]    # their RB3, 10/wk
+    ok, why, ours_gain, theirs_gain = trades_out.value_check(
+        ours, theirs, give, get, v, settings_10())
+    assert ok, why
+    assert ours_gain > 0 and theirs_gain <= 0 and "advisory" in why
+
+
+# ── D9: core annotates, the agent decides ────────────────────────────────────
+
+
+def test_a_flagged_waiver_candidate_is_shown_not_hidden():
+    from core.model import priors as P
+
+    roster = _roster_3te()
+    fa = pl(60, Pos.WR, 9.6)      # marginal, and the drop is tradeable
+    ros = _vals(roster + [fa], "ros")
+    with P.overridden(**{"season.trade_instead_of_drop_min_vor": -100.0,
+                         "season.urgent_add_weekly_gain": 4.0}):
+        fv = _vals(roster + [fa])
+        plan = waivers.build(roster, [fa], fv, settings_10(), waiver_priority=8,
+                             bench_open=0, current_week=9, ros_valuations=ros)
+    assert not plan.free_adds
+    c = plan.candidates[0]
+    assert c.player.espn_id == 60
+    assert c.verdict == "hold"
+    assert any(f.startswith("D4.5") for f in c.flags)
+    assert c.ros_vor is not None
+
+
+def test_protected_ids_are_the_top_n_by_ros_vor():
+    from core.model import priors as P
+
+    roster = _roster_3te()
+    ros = _vals(roster, "ros")
+    with P.overridden(**{"waivers.never_drop_top_n": 2}):
+        prot = waivers.protected_ids(roster, ros)
+    assert len(prot) == 2
+    top = sorted(roster, key=lambda p: -ros[p.espn_id].vor)[:2]
+    assert prot == {p.espn_id for p in top}
+
+
+def test_trade_ideas_carry_market_numbers_and_flags():
+    ours = _roster_3te()
+    theirs = [
+        pl(21, Pos.QB, 19), pl(23, Pos.RB, 13), pl(24, Pos.RB, 12), pl(25, Pos.RB, 12),
+        pl(26, Pos.WR, 14), pl(27, Pos.WR, 11), pl(28, Pos.TE, 4, name="their bad TE"),
+        pl(29, Pos.RB, 10),
+    ]
+    v = _vals(ours + theirs, "ros")
+    props = trades_out.build(ours, {2: ("them", theirs)}, v, settings_10(), week=3)
+    assert props
+    p = props[0]
+    assert p.market_in > 0 and p.market_out > 0
+    assert 0 < p.market_ratio
+    assert isinstance(p.flags, list)
+
+
+def test_market_value_curve_and_adp_decay():
+    from core.model import market
+    from tests.conftest import make_player
+
+    assert market.trade_value(1) == 100.0
+    assert 60 < market.trade_value(24) < 70
+    assert market.trade_value(150) < 8
+    assert market.trade_value(None) == 1.0
+    p = make_player(1, Pos.RB, 200.0, name="x")
+    p.espn_adp = 10.0
+    assert market.market_rank(p, 50, week=1) == 10.0          # week 1: pure ADP
+    assert market.market_rank(p, 50, week=9, adp_decay_weeks=8) == 50.0   # decayed out
+    assert 10.0 < market.market_rank(p, 50, week=5, adp_decay_weeks=8) < 50.0
+
+
+def test_in_season_replacement_at_a_one_slot_position_is_the_best_free_agent():
+    """D6 / §2.3: with the league's QBs rostered, replacement level is the
+    best QB on the wire this week, not the 11th season total."""
+    from core.model.replacement import replacement_points
+
+    s = settings_10()
+    rostered = [pl(100 + i, Pos.QB, 20 - i, on_team_id=(i % 10) + 1) for i in range(10)]
+    wire = [pl(200, Pos.QB, 15.5), pl(201, Pos.QB, 9.0)]          # on_team_id None
+    pts = {p.espn_id: p.proj_week[9] for p in rostered + wire}
+    base = replacement_points(Pos.QB, rostered + wire, s, week=9, points_of=pts)
+    assert base == 15.5
+    # A draft board (nobody rostered) keeps the rank baseline.
+    draft = [pl(300 + i, Pos.QB, 20 - i) for i in range(12)]
+    pts = {p.espn_id: p.proj_week[9] for p in draft}
+    assert replacement_points(Pos.QB, draft, s, week=9, points_of=pts) == draft[10].proj_week[9]
+
+
+def test_per_position_market_blend_uses_the_positional_ladder():
+    from core.model import market
+    from tests.conftest import make_player
+
+    tes = [make_player(i, Pos.TE, 200.0 - 20 * i, name=f"te{i}") for i in range(3)]
+    rbs = [make_player(10 + i, Pos.RB, 400.0 - 10 * i, name=f"rb{i}") for i in range(3)]
+    # ESPN ranks te2 as the best TE (overall rank 5) — but overall rank 5 on
+    # the cross-position ladder would be an RB number.
+    ranks = {2: 5, 0: 40, 1: 60, 10: 1, 11: 2, 12: 3}
+    market.blend(tes + rbs, ranks, 1.0, by_position=True)
+    assert tes[2].proj_season == 200.0       # worth our best TE, not our 5th player
 
 
 # ── the research bridge ──────────────────────────────────────────────────────

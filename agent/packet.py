@@ -66,15 +66,18 @@ def dossier_packet(player, val, *, adp: float | None = None) -> dict[str, Any]:
     }
 
 
-def weekly_dossier_packet(player, val, *, week: int, role: str) -> dict[str, Any]:
+def weekly_dossier_packet(player, val, *, week: int, role: str,
+                          question: str | None = None) -> dict[str, Any]:
     """D1 / D3.1 — one player, one morning, for one research agent.
 
     `role` tells the researcher why we care (roster / waiver / trade) so the
     analyst read is aimed at the right question — start-sit for a starter,
-    role and volume for a waiver target.
+    role and volume for a waiver target. `question` is the manager's own
+    question when it asked for this dossier mid-sweep (D9); the researcher
+    answers it inside the same schema.
     """
     row = _player_row(player, val)
-    return {
+    out = {
         "task": "weekly_dossier",
         "as_of": datetime.now(UTC).date().isoformat(),
         "nfl_week": week,
@@ -86,6 +89,9 @@ def weekly_dossier_packet(player, val, *, week: int, role: str) -> dict[str, Any
             f"{row['status']}."
         ),
     }
+    if question:
+        out["manager_question"] = question[:400]
+    return out
 
 
 def judge_packet(plan, room, *, for_overall: int, budget_s: float,
@@ -258,8 +264,20 @@ def build(task: str, state: ls_mod.LeagueState | None = None,
                 "reject_trade", "notify",
             ],
             "never": ["counter-offer", "league settings", "chat", "other teams"],
-            "note": ("an action without a § citation or the six D8 reasoning fields "
-                     "is rejected before it executes"),
+            "hard_in_code": [
+                "§5.7 three adds a rolling week", "§5.4 roster room",
+                "§5.5 never drop a top-N player by ROS VOR",
+                "§6.1 proposal rate limits", "§6.2 our lineup must improve",
+                f"§6.3 market ratio floor {priors().get('trades.min_market_ratio')}",
+                "§6.5 no protected asset for a package", "§6.8 the gauntlet on accepts",
+            ],
+            "note": ("everything else in the packet is a flag, not a refusal (D9). "
+                     "An action without a § citation or the six D8 reasoning fields "
+                     "is rejected before it executes. With the kill switch off, call "
+                     "the tool anyway: the refusal IS the read-only record."),
+            "research_on_demand": (
+                f"research_player(espn_id, question) — up to "
+                f"{priors().get('research_week.on_demand_max')} this run, ~40s each"),
         },
         "rate_limits": {
             "adds_left_this_week": rate_limits.adds_left(),
@@ -331,21 +349,32 @@ def build(task: str, state: ls_mod.LeagueState | None = None,
 
         def _cand(c):
             return {"name": c.player.name, "espn_id": c.player.espn_id,
-                    "pos": c.player.pos.value, "gain_per_week": round(c.net_gain, 2),
+                    "pos": c.player.pos.value, "team": c.player.pro_team,
+                    "status": c.player.injury_status.value,
+                    "proj_week": round(c.valuation.points, 1),
+                    "gain_per_week": round(c.net_gain, 2),
+                    "ros_vor": c.ros_vor,
                     "replaces": c.replaces.name if c.replaces else None,
                     "drop": c.drop.name if c.drop else None,
                     "drop_id": c.drop.espn_id if c.drop else None,
                     "drop_tradeable": c.drop_tradeable,
-                    "archetype": c.archetype, "why": c.reasons}
+                    "free_agent": c.is_free_agent,
+                    "archetype": c.archetype,
+                    "core_verdict": c.verdict,
+                    "flags": c.flags, "why": c.reasons,
+                    "researched": c.player.espn_id in dossiers}
 
         packet["waiver_plan"] = {
             "priority": wplan.priority,
             "adds_left_this_week": wplan.adds_left,
-            "free_adds": [_cand(c) for c in wplan.free_adds],
-            "claims": [_cand(c) for c in wplan.claims],
-            # The skips are decisions too, and often the right one.
-            "skipped": [{"name": c.player.name, "why": why}
-                        for c, why in wplan.skipped[:10]],
+            "core_recommends": {
+                "free_adds": [c.player.name for c in wplan.free_adds],
+                "claims": [c.player.name for c in wplan.claims],
+            },
+            # D9 — the menu. Every candidate with core's number and core's
+            # objections. The agent chooses; the gate only enforces the cap,
+            # the room and §5.5.
+            "candidates": [_cand(c) for c in wplan.candidates],
             "notes": wplan.notes,
         }
 
@@ -354,18 +383,38 @@ def build(task: str, state: ls_mod.LeagueState | None = None,
 
         others = {tid: (t.name, t.roster) for tid, t in st.teams.items()
                   if tid != st.my_team_id}
-        props = T.build(me.roster, others, ros_vals, st.facts.settings)
+        props = T.build(me.roster, others, ros_vals, st.facts.settings, week=st.week)
+        mv = T.market_values(st.all_players(), ros_vals, week=st.week)
+
+        def _side(players):
+            return [{"espn_id": x.espn_id, "name": x.name, "pos": x.pos.value,
+                     "ros_vor": round(ros_vals[x.espn_id].vor, 1) if x.espn_id in ros_vals else None,
+                     "market_value": mv.get(x.espn_id)} for x in players]
+
         packet["trade_ideas"] = {
             "proposals_left_today": day_left,
             "proposals_left_this_week": week_left,
+            "note": ("D9: our_gain is hard (§6.2); market_ratio below "
+                     f"{priors().get('trades.min_market_ratio')} is refused (§6.3); "
+                     "their_gain is our model's guess at THEIR lineup and is advisory. "
+                     "You may propose an offer that is not on this list — the same "
+                     "gate applies. Every proposal needs why_they_accept."),
             "ideas": [{
                 "to_team": p.to_team, "to_team_name": p.to_team_name,
-                "give": [{"espn_id": x.espn_id, "name": x.name, "pos": x.pos.value} for x in p.give],
-                "get": [{"espn_id": x.espn_id, "name": x.name, "pos": x.pos.value} for x in p.get],
-                "our_gain": p.our_gain, "their_gain": p.their_gain,
+                "give": _side(p.give), "get": _side(p.get),
+                "our_gain": p.our_gain, "their_gain_advisory": p.their_gain,
+                "market_out": p.market_out, "market_in": p.market_in,
+                "market_ratio": p.market_ratio,
                 "fairness": p.fairness, "shape_effect": p.shape_effect,
-                "rationale": p.rationale, "warnings": p.warnings,
+                "rationale": p.rationale, "flags": p.flags, "warnings": p.warnings,
             } for p in props],
+            "league_market": [
+                {"team": t.name, "record": f"{t.wins}-{t.losses}",
+                 "top_by_market": [
+                     {"name": x.name, "pos": x.pos.value, "market_value": mv.get(x.espn_id)}
+                     for x in sorted(t.roster, key=lambda x: -(mv.get(x.espn_id) or 0))[:4]]}
+                for tid, t in st.teams.items() if tid != st.my_team_id
+            ],
         }
 
     if task == "tuesday":

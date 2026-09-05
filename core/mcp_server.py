@@ -199,21 +199,30 @@ def get_waiver_plan() -> str:
         ros_valuations=ros,
     )
 
+    from core.manager import research as R
+    researched = set(R.load_all(week=s.week))
+
     def _cand(c):
         return {"name": c.player.name, "espn_id": c.player.espn_id,
-                "pos": c.player.pos.value, "weekly_gain": round(c.net_gain, 2),
+                "pos": c.player.pos.value, "team": c.player.pro_team,
+                "status": c.player.injury_status.value,
+                "proj_week": round(c.valuation.points, 1),
+                "weekly_gain": round(c.net_gain, 2), "ros_vor": c.ros_vor,
                 "replaces": c.replaces.name if c.replaces else None,
                 "drop": c.drop.name if c.drop else None,
                 "drop_id": c.drop.espn_id if c.drop else None,
                 "drop_tradeable": c.drop_tradeable,
-                "archetype": c.archetype, "why": c.reasons}
+                "free_agent": c.is_free_agent,
+                "archetype": c.archetype, "core_verdict": c.verdict,
+                "flags": c.flags, "why": c.reasons,
+                "researched": c.player.espn_id in researched}
 
     return _ok(
         priority=plan.priority,
         adds_left_this_week=plan.adds_left,
-        free_adds=[_cand(c) for c in plan.free_adds],
-        claims=[_cand(c) for c in plan.claims],
-        skipped=[{"name": c.player.name, "why": why} for c, why in plan.skipped[:10]],
+        core_recommends={"free_adds": [c.player.name for c in plan.free_adds],
+                         "claims": [c.player.name for c in plan.claims]},
+        candidates=[_cand(c) for c in plan.candidates],
         notes=plan.notes,
     )
 
@@ -249,6 +258,70 @@ def get_research(espn_id: int | None = None) -> str:
 
     ds = R.load_all(week=s.week)
     return _ok(count=len(ds), dossiers=R.facts(ds, [espn_id] if espn_id else None))
+
+
+_ON_DEMAND = {"used": 0, "cost": 0.0}
+
+
+@mcp.tool()
+def research_player(espn_id: int, question: str = "") -> str:
+    """Research one player NOW (D9): a web pass by a research agent — status
+    and practice report, usage trend, matchup, analyst read, dated news with
+    sources — written as this week's dossier and folded into the valuation.
+
+    Use it for anyone the morning pass skipped: a trade target on another
+    roster, a waiver candidate you are weighing, a player whose dossier is
+    missing. `question` is what you actually want to know ("is his role
+    safe with X back?", "would his manager sell?"); the researcher answers
+    it in `analyst_read.detail`.
+
+    Costs ~40s and ~$0.25; capped per run. A fresh dossier from this
+    morning is returned as-is unless you ask a question.
+    """
+    from agent import run as agent_run
+    from agent.packet import weekly_dossier_packet
+    from core.manager import research as R
+    from core.model.priors import priors
+
+    s = _snap()
+    by_id = {p.espn_id: p for p in s.all_players()}
+    pl = by_id.get(espn_id)
+    if pl is None:
+        return _ok(error=f"player {espn_id} is not in the league pool")
+
+    max_age = float(priors().get("research_week.max_age_hours"))
+    fresh = R.load_one(espn_id, max_age_hours=max_age)
+    if fresh is not None and fresh.week == s.week and not question.strip():
+        return _ok(fresh=True, dossier=R.facts({espn_id: fresh})[0])
+
+    cap = int(priors().get("research_week.on_demand_max"))
+    if _ON_DEMAND["used"] >= cap:
+        return _ok(error=f"research_player cap reached ({cap} this run) — decide on "
+                         "what you have, or escalate")
+
+    v = _vals(s).get(espn_id)
+    role = ("roster" if pl.espn_id in {p.espn_id for p in s.me.roster}
+            else "trade" if pl.on_team_id else "waiver")
+    packet = weekly_dossier_packet(pl, v, week=s.week, role=role,
+                                   question=question.strip() or None)
+    _ON_DEMAND["used"] += 1
+    res = agent_run.run("weekly_dossier", packet, timeout=300)
+    cost = float((res.usage or {}).get("total_cost_usd") or 0.0)
+    _ON_DEMAND["cost"] += cost
+    if not res.ok or not res.output:
+        return _ok(error=f"research failed: {res.error}", used=_ON_DEMAND["used"], cap=cap)
+    out = dict(res.output)
+    out.setdefault("espn_id", espn_id)
+    out.setdefault("name", pl.name)
+    R.write(espn_id, out, week=s.week)
+    d = R.load_one(espn_id, max_age_hours=max_age)
+    if d is None:
+        return _ok(error="dossier written but rejected by validation (no verifiable source)",
+                   used=_ON_DEMAND["used"], cap=cap)
+    log.info("on-demand research: %s (%s) $%.2f", pl.name, role, cost)
+    return _ok(fresh=False, used=_ON_DEMAND["used"], cap=cap, cost_usd=round(cost, 2),
+               note="multipliers now folded into every valuation you read from here on",
+               dossier=R.facts({espn_id: d})[0])
 
 
 @mcp.tool()
@@ -381,19 +454,30 @@ def get_trade_ideas() -> str:
 
     v = _vals(s, window="ros")
     others = {tid: (t.name, t.roster) for tid, t in s.teams.items() if tid != s.my_team_id}
-    props = T.build(s.me.roster, others, v, s.facts.settings)
+    props = T.build(s.me.roster, others, v, s.facts.settings, week=s.week)
+    mv = T.market_values(s.all_players(), v, week=s.week)
     day_left, week_left = rate_limits.proposals_left()
+
+    def _side(players):
+        return [{"espn_id": x.espn_id, "name": x.name, "pos": x.pos.value,
+                 "ros_vor": round(v[x.espn_id].vor, 1) if x.espn_id in v else None,
+                 "market_value": mv.get(x.espn_id)} for x in players]
+
     return _ok(
         count=len(props),
         proposals_left_today=day_left,
         proposals_left_this_week=week_left,
+        note=("our_gain is hard (§6.2); market_ratio under the floor is refused (§6.3); "
+              "their_gain_advisory is our model's guess. Any offer, listed or not, goes "
+              "through the same gate. Say why they accept (D9)."),
         proposals=[{
             "to_team": p.to_team, "to_team_name": p.to_team_name,
-            "give": [{"espn_id": x.espn_id, "name": x.name, "pos": x.pos.value} for x in p.give],
-            "get": [{"espn_id": x.espn_id, "name": x.name, "pos": x.pos.value} for x in p.get],
-            "our_gain": p.our_gain, "their_gain": p.their_gain,
+            "give": _side(p.give), "get": _side(p.get),
+            "our_gain": p.our_gain, "their_gain_advisory": p.their_gain,
+            "market_out": p.market_out, "market_in": p.market_in,
+            "market_ratio": p.market_ratio,
             "fairness": p.fairness, "shape_effect": p.shape_effect,
-            "rationale": p.rationale, "warnings": p.warnings,
+            "rationale": p.rationale, "flags": p.flags, "warnings": p.warnings,
         } for p in props],
     )
 
@@ -416,9 +500,10 @@ def get_guardrails() -> str:
     """The write table in force right now (§8.2), and the kill switch state."""
     return _ok(
         kill_switch=kill_switch.state(),
-        auto=["set_lineup", "waiver_claim / add_drop", "reject_trade",
+        auto=["set_lineup", "waiver_claim / add_drop (3 a week, never a §5.5 drop)",
+              "propose_trade (1/day, 3/week, §6.2 + market floor §6.3 in code)",
+              "reject_trade",
               "accept_trade (only on a clean §6.8 gauntlet, re-run in code)"],
-        not_exposed=["propose_trade — surface ideas from get_trade_ideas via notify"],
         never=["counter-offer", "league settings", "chat/messages",
                "anything outside our own team"],
         reminder="an action without a § citation is rejected at the schema boundary",
@@ -453,8 +538,8 @@ def set_lineup(moves: list[dict], reason: str, cites: list[str]) -> str:
             )
 
     gate, receipt = write_gate.execute(action, perform, skip_health=True)
-    if gate.allowed and receipt:
-        _notify("action", "Lineup set", f"{reason}\n{receipt}")
+    # No Slack here: the sweep posts ONE digest of what was done (Pearce,
+    # 2026-09-05: "just what it did"). The reason lives in decisions.jsonl.
     return _ok(allowed=gate.allowed, refused_by=gate.refused_by,
                reason=gate.reason, receipt=str(receipt) if receipt else None)
 
@@ -468,6 +553,22 @@ def add_drop(add_id: int, drop_id: int | None, reason: str, cites: list[str]) ->
     add_p, drop_p = by_id.get(add_id), by_id.get(drop_id) if drop_id else None
     if add_p is None:
         return _ok(allowed=False, reason=f"player {add_id} not found in the pool")
+
+    # §5.5 — the one waiver rule that is a refusal, not a flag (D9): a top-N
+    # player by ROS VOR is never dropped for an add. Irreversible, so in code.
+    if drop_p is not None:
+        from core.manager import waivers as W
+
+        if drop_p.espn_id not in {p.espn_id for p in s.me.roster}:
+            return _ok(allowed=False, refused_by="§5.4",
+                       reason=f"{drop_p.name} is not on our roster")
+        if drop_p.espn_id in W.protected_ids(s.me.roster, _vals(s, window="ros")):
+            from core.model.priors import priors
+
+            top_n = priors().get("waivers.never_drop_top_n")
+            return _ok(allowed=False, refused_by="§5.5",
+                       reason=f"{drop_p.name} is a top-{top_n} player by ROS VOR — never "
+                              "dropped; trade him if you must move him")
 
     kind = (ActionKind.WAIVER_CLAIM if add_id in s.on_waivers else ActionKind.ADD_DROP)
     action = Action(
@@ -492,25 +593,29 @@ def add_drop(add_id: int, drop_id: int | None, reason: str, cites: list[str]) ->
         from core.gates import rate_limits
 
         rate_limits.record_add(add_id, drop_id)
-        _notify("action", f"{'Claimed' if kind is ActionKind.WAIVER_CLAIM else 'Added'} "
-                          f"{add_p.name}",
-                f"{reason}\ndropped: {drop_p.name if drop_p else '—'}\n"
-                f"adds left this week: {rate_limits.adds_left()}\n{receipt}")
     return _ok(allowed=gate.allowed, refused_by=gate.refused_by,
                reason=gate.reason, receipt=str(receipt) if receipt else None)
 
 
 @mcp.tool()
 def propose_trade(to_team: int, give_ids: list[int], get_ids: list[int],
-                  reason: str, cites: list[str]) -> str:
+                  reason: str, cites: list[str], why_they_accept: str = "") -> str:
     """Send an outgoing trade offer. AUTO inside §6.1–§6.7: rate-limited
-    (1/day, 3/week, 1 open per manager, no re-propose inside 14 days) and the
-    §6.2/§6.3 both-sides value test is re-run HERE in code — an offer that
-    does not help the other side is refused before it is sent.
+    (1/day, 3/week, 1 open per manager, no re-propose inside 14 days). Re-run
+    HERE in code: our lineup must improve (§6.2), the market ratio must clear
+    `trades.min_market_ratio` (§6.3), no protected asset for a package (§6.5).
+    Our model's read of THEIR gain is advisory (D9).
+
+    `why_they_accept` is required: the reason this specific human says yes —
+    their hole, their bye crunch, their record, what they paid for the player.
+    It is logged and graded on Tuesday against what they actually did.
 
     This goes to another human. Use one of the three only for an offer you
     would send with your name on it (D4.6).
     """
+    if len((why_they_accept or "").strip()) < 30:
+        return _ok(allowed=False, refused_by="D9",
+                   reason="why_they_accept is required — say why this manager says yes")
     from core.gates import rate_limits
     from core.manager import trades_out as T
 
@@ -530,13 +635,16 @@ def propose_trade(to_team: int, give_ids: list[int], get_ids: list[int],
 
     v = _vals(s, window="ros")
     ok, why, ours, theirs_gain = T.value_check(
-        s.me.roster, them.roster, give, get, v, s.facts.settings)
+        s.me.roster, them.roster, give, get, v, s.facts.settings, week=s.week)
     if not ok:
-        return _ok(allowed=False, refused_by="§6.2/§6.3", reason=why)
+        return _ok(allowed=False, refused_by="§6.2/§6.3/§6.5", reason=why)
 
     action = Action(
         kind=ActionKind.PROPOSE_TRADE,
-        args={"to_team": to_team, "give": give_ids, "get": get_ids},
+        args={"to_team": to_team, "to_team_name": them.name,
+              "give": give_ids, "get": get_ids,
+              "give_names": [p.name for p in give], "get_names": [p.name for p in get],
+              "why_they_accept": why_they_accept.strip()[:600]},
         cites=cites or ["§6.2"], reason=reason,
     )
 
@@ -556,10 +664,6 @@ def propose_trade(to_team: int, give_ids: list[int], get_ids: list[int],
     )
     if gate.allowed and receipt:
         rate_limits.record_proposal(to_team, give_ids, get_ids)
-        day_left, week_left = rate_limits.proposals_left()
-        _notify("action", f"Proposed trade to {them.name}",
-                f"give: {', '.join(p.name for p in give)}\nget: {', '.join(p.name for p in get)}\n"
-                f"{why}\n{reason}\nproposals left: {day_left} today, {week_left} this week\n{receipt}")
     return _ok(allowed=gate.allowed, refused_by=gate.refused_by, reason=gate.reason,
                value_check=why, receipt=str(receipt) if receipt else None)
 
@@ -573,7 +677,12 @@ def reject_trade(offer_id: str, reason: str, cites: list[str]) -> str:
         return _ok(allowed=False, reason=f"no pending offer {offer_id!r} — nothing to reject")
     _, offer = match
     names = [p.name for p in offer.incoming + offer.outgoing]
-    action = Action(kind=ActionKind.REJECT_TRADE, args={"offer_id": offer_id},
+    their = s.teams.get(offer.from_team)
+    action = Action(kind=ActionKind.REJECT_TRADE,
+                    args={"offer_id": offer_id, "from_team": offer.from_team,
+                          "from_team_name": their.name if their else f"team {offer.from_team}",
+                          "get_names": [p.name for p in offer.incoming],
+                          "give_names": [p.name for p in offer.outgoing]},
                     cites=cites or ["§6.8.0"], reason=reason)
 
     def perform():
@@ -586,8 +695,6 @@ def reject_trade(offer_id: str, reason: str, cites: list[str]) -> str:
             )
 
     gate, receipt = write_gate.execute(action, perform, skip_health=True)
-    if gate.allowed and receipt:
-        _notify("action", f"Rejected trade from team {offer.from_team}", f"{reason}\n{receipt}")
     return _ok(allowed=gate.allowed, reason=gate.reason,
                receipt=str(receipt) if receipt else None)
 
@@ -609,9 +716,13 @@ def accept_trade(offer_id: str, reason: str, cites: list[str]) -> str:
     po, offer = match
     result = _gauntlet(s, offer)
     names = [p.name for p in offer.incoming + offer.outgoing]
+    their = s.teams.get(offer.from_team)
     action = Action(
         kind=ActionKind.ACCEPT_TRADE,
-        args={"offer_id": offer_id, "from_team": offer.from_team, "gauntlet": result},
+        args={"offer_id": offer_id, "from_team": offer.from_team, "gauntlet": result,
+              "from_team_name": their.name if their else f"team {offer.from_team}",
+              "get_names": [p.name for p in offer.incoming],
+              "give_names": [p.name for p in offer.outgoing]},
         cites=cites or ["§6.8"], reason=reason,
     )
 
@@ -630,12 +741,12 @@ def accept_trade(offer_id: str, reason: str, cites: list[str]) -> str:
     )
     if gate.allowed and receipt:
         rate_limits.record_accept(offer_id, offer.from_team)
-        _notify("action", f"ACCEPTED trade from team {offer.from_team}",
-                f"{reason}\nget: {', '.join(p.name for p in offer.incoming)}\n"
-                f"give: {', '.join(p.name for p in offer.outgoing)}\n\n{gates_txt}\n{receipt}")
-    elif not gate.allowed:
-        _notify("info", f"Trade from team {offer.from_team} NOT accepted",
-                f"{gate.refused_by}: {gate.reason}\n\n{gates_txt}")
+        # §6.8.12 — an accept posts the moment it fires. Short: the gauntlet
+        # is in decisions.jsonl.
+        _notify("action", f"ACCEPTED trade from {action.args['from_team_name']}",
+                f"get {', '.join(p.name for p in offer.incoming)} · "
+                f"give {', '.join(p.name for p in offer.outgoing)}")
+    log.info("gauntlet for %s:\n%s", offer_id, gates_txt)
     return _ok(allowed=gate.allowed, refused_by=gate.refused_by, reason=gate.reason,
                gauntlet_failed_on=result.failed_on,
                receipt=str(receipt) if receipt else None)

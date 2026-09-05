@@ -10,6 +10,11 @@ The packet tells you today's date, the NFL week, and what the engine currently
 believes (its projection, and whether he is on our roster, a waiver target or
 a trade target).
 
+If the packet carries `manager_question`, the manager asked for this dossier
+mid-decision and that is the question to answer. Answer it in
+`analyst_read.detail`, in the first sentence, with the source — then fill the
+rest of the schema as usual.
+
 ## The five questions, in order of importance
 
 1. **Status.** Injury designation and the most recent practice participation

@@ -70,7 +70,8 @@ def build_board(season: Season, *, facts: LeagueFacts | None = None,
     # than read from disk so the benchmark can sweep the weight.
     if market_ranks:
         market.blend(season.players, market_ranks,
-                     float(priors().get("model.market_blend")))
+                     float(priors().get("model.market_blend")),
+                     by_position=bool(priors().get("model.market_blend_by_position")))
 
     # §P — our own projection, blended AFTER the consensus so both are mixed
     # into one number before valuation, exactly as the live board does it.

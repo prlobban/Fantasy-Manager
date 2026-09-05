@@ -29,6 +29,9 @@ projection. Ping on Slack when human input is needed.
 | D9 | **Tuesday** — box scores → efficiency, calibration, decision grading → agent narrates → dated history file + `data/lessons.md` (the memory the daily run reads) | `scripts/manage.py --tuesday`, `core/manager/review.py`, `core/state/lessons.py` | History file written; lessons fed into the next daily packet |
 | D10 | **Schedule** — cron on the box: research + sweep daily, Tuesday review, lineup passes Thu/Sun/Mon | `scripts/cron_manage.sh`, crontab | Installed with `ENABLED=off` (read-and-report) for Monday's test |
 | D11 | **Runbook + tests** | `docs/runbook-season.md`, `tests/` | Green |
+| D12 | **Reasoning drives** *(09-05, second brief)* — core annotates, the agent decides: every waiver candidate with `flags` + `core_verdict` instead of a hidden `skipped`; trade ideas carry `market_ratio` (ADP decaying into ROS rank) and `their_gain` is advisory; `why_they_accept` required on every proposal; `research_player` lets the sweep research any player mid-decision | `core/manager/waivers.py`, `core/manager/trades_out.py`, `core/model/market.py`, `core/mcp_server.py` | Hard in code = cap · room · §5.5 · §6.1 · §6.2 · market floor · §6.5 · gauntlet. Everything else a flag |
+| D13 | **Slack says what, the log says why** — one sentence + one line per move; full reasoning in `data/reasoning/` | `scripts/manage.py` | No paragraphs in #fantasy |
+| D14 | **Draft post-mortem** — why 10th/10, measured | `docs/draft-post-mortem-2026.md` | Two candidate fixes benchmarked; the simulator's blind spot named |
 
 ## Cadence (CT)
 

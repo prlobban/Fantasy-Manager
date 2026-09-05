@@ -14,6 +14,17 @@ Three things this league and Pearce's brief force:
   - A droppable player another team would start is a trade chip, not a cut
     (D4.5). Such an add is held back unless it is urgent.
 
+**Core annotates; the agent decides (D9, 2026-09-05).** The first version
+filtered: anything under a bar landed in `skipped` and the agent never saw it
+as a choice. Pearce's brief after the first live sweep was that reasoning,
+not arithmetic, should drive the season, because the wire is a market of
+humans and a bar in a YAML file does not know what a practice report says.
+So every candidate is now returned with its number AND the rules that would
+object to it as `flags`; `claims` and `free_adds` are core's recommendation,
+nothing more. The only things still enforced in code are the irreversible
+ones: the weekly cap, roster room, and never dropping a top-N player (§5.5,
+in the add_drop tool).
+
 The drop is chosen from ONE optimal lineup (2026-09-05 fix): the first version
 scored each slot independently, so the flex starter never registered as a
 starter and was proposed as a free drop on the manager's first live run.
@@ -48,10 +59,24 @@ class Candidate:
     #: True if he is a free agent (no waiver claim needed, no priority spent).
     is_free_agent: bool
     reasons: list[str] = field(default_factory=list)
+    #: The rules that would object to this add, each naming its section. An
+    #: empty list is core's recommendation to add.
+    flags: list[str] = field(default_factory=list)
+    #: His rest-of-season VOR, for the upside read (D2.3).
+    ros_vor: float | None = None
 
     @property
     def net_gain(self) -> float:
         return self.weekly_gain - self.drop_cost
+
+    @property
+    def verdict(self) -> str:
+        """core's one-word read: add / claim / hold / skip."""
+        if any(f.startswith("D4.5") for f in self.flags):
+            return "hold"
+        if self.flags:
+            return "skip"
+        return "add" if self.is_free_agent else "claim"
 
 
 @dataclass
@@ -62,6 +87,9 @@ class WaiverPlan:
     priority: int | None
     adds_left: int | None = None
     notes: list[str] = field(default_factory=list)
+    #: Every candidate worth a look, best weekly gain first, with flags —
+    #: the agent's menu (D9). Includes the upside stashes by ROS value.
+    candidates: list[Candidate] = field(default_factory=list)
 
     def summary(self) -> str:
         lines = [f"waiver priority: {self.priority if self.priority else 'unknown'}"
@@ -146,6 +174,17 @@ def weekly_gain_for(
     return max(0.0, gain), replaced
 
 
+def protected_ids(roster: list[Player], ros_valuations: dict[int, Valuation]) -> set[int]:
+    """§5.5 — the top-N players by ROS VOR are never dropped. Enforced in
+    the add_drop tool as well as honoured here."""
+    top_n = int(priors().get("waivers.never_drop_top_n"))
+    ranked = sorted(
+        (pl for pl in roster if pl.espn_id in ros_valuations),
+        key=lambda pl: -ros_valuations[pl.espn_id].vor,
+    )
+    return {pl.espn_id for pl in ranked[:top_n]}
+
+
 def choose_drop(
     roster: list[Player],
     valuations: dict[int, Valuation],
@@ -164,16 +203,11 @@ def choose_drop(
     surplus anywhere, then lowest ROS value.
     """
     p = priors()
-    top_n = int(p.get("waivers.never_drop_top_n"))
     keep_weeks = int(p.get("waivers.keep_injured_return_within_weeks"))
     trade_min = float(p.get("season.trade_instead_of_drop_min_vor"))
     ros = ros_valuations or valuations
 
-    ranked = sorted(
-        (pl for pl in roster if pl.espn_id in ros),
-        key=lambda pl: -ros[pl.espn_id].vor,
-    )
-    protected = {pl.espn_id for pl in ranked[:top_n]}
+    protected = protected_ids(roster, ros)
     starters = _starters(roster, valuations, settings)
 
     droppable: list[tuple[int, float, Player]] = []
@@ -240,11 +274,16 @@ def build(
     adds_left: int | None = None,
     ros_valuations: dict[int, Valuation] | None = None,
 ) -> WaiverPlan:
-    """The whole §5 decision.
+    """The whole §5 read: every candidate scored, every rule stated.
 
     `on_waivers` is the set of player ids still inside the 24h waiver window —
     those cost priority. Everyone else is a free agent and costs nothing
     (§5.3.2). `adds_left` is what §5.7 still allows this week.
+
+    `claims` and `free_adds` are the candidates core would take. `candidates`
+    is everyone worth a look with the objections attached (D9): the agent
+    may add any of them; the gate only refuses the cap, the room and a
+    protected drop.
     """
     p = priors()
     on_waivers = on_waivers or set()
@@ -252,9 +291,12 @@ def build(
     streamer_floor = int(p.get("waivers.streamer_priority_floor"))
     urgent = float(p.get("season.urgent_add_weekly_gain"))
     cap = int(p.get("season.max_adds_per_week"))
+    n_shown = int(p.get("waivers.candidates_shown"))
+    n_upside = int(p.get("waivers.upside_shown"))
     max_claims = max_claims if max_claims is not None else cap
     if adds_left is not None:
         max_claims = min(max_claims, adds_left)
+    ros = ros_valuations or valuations
 
     our_rb1 = max(
         (x for x in roster if x.pos is Pos.RB and x.espn_id in valuations),
@@ -274,60 +316,34 @@ def build(
             continue
         gain, replaces = weekly_gain_for(fa, v, roster, valuations, settings)
         needs_drop = bench_open <= 0
-        cands.append(Candidate(
+        c = Candidate(
             player=fa, valuation=v, replaces=replaces, weekly_gain=gain,
             drop=drop if needs_drop else None,
             drop_cost=drop_cost if needs_drop else 0.0,
             drop_tradeable=tradeable if needs_drop else False,
             archetype=classify(fa, v, gain, our_rb1),
             is_free_agent=fa.espn_id not in on_waivers,
-        ))
+            ros_vor=round(ros[fa.espn_id].vor, 1) if fa.espn_id in ros else None,
+        )
+        _flag(c, bench_open=bench_open, urgent=urgent, waiver_priority=waiver_priority,
+              streamer_floor=streamer_floor, min_gain=min_gain, band=band)
+        cands.append(c)
 
     cands.sort(key=lambda c: -c.net_gain)
 
-    claims: list[Candidate] = []
-    free_adds: list[Candidate] = []
-    skipped: list[tuple[Candidate, str]] = []
+    claims = [c for c in cands if c.verdict == "claim"]
+    free_adds = [c for c in cands if c.verdict == "add"]
+    skipped = [(c, "; ".join(c.flags)) for c in cands if c.flags]
 
-    for c in cands:
-        if c.net_gain <= 0:
-            skipped.append((c, f"no net starting-lineup gain ({c.net_gain:+.1f}/wk)"))
-            continue
-        if c.drop is None and bench_open <= 0:
-            skipped.append((c, "no bench room and nothing droppable (§5.5)"))
-            continue
-        # D4.5 — the drop is a trade chip. Hold the add unless it is urgent.
-        if c.drop_tradeable and c.weekly_gain < urgent:
-            skipped.append((
-                c,
-                f"D4.5 drop {c.drop.name} has trade value — propose a trade first; "
-                f"+{c.weekly_gain:.1f}/wk is under the {urgent:.1f} urgent bar",
-            ))
-            continue
-
-        if c.is_free_agent:
-            c.reasons.append("§5.3.2 free agent — costs no waiver priority "
-                             "(still one of the week's adds, §5.7)")
-            free_adds.append(c)
-            continue
-
-        if c.archetype == "streamer" and (waiver_priority or 1) <= streamer_floor:
-            skipped.append((
-                c,
-                f"§5.3.3 streamer, and our priority ({waiver_priority}) is too valuable "
-                "to spend on one week",
-            ))
-            continue
-        if c.net_gain < min_gain:
-            skipped.append((
-                c,
-                f"§5.3.1 +{c.net_gain:.1f}/wk is under the {min_gain:.1f} bar for {band} priority",
-            ))
-            continue
-
-        c.reasons.append(f"§5.3.1 +{c.net_gain:.1f}/wk clears the {min_gain:.1f} bar "
-                         f"for {band} priority")
-        claims.append(c)
+    # The menu: the best by this week's gain, plus the best stashes by ROS
+    # value that the weekly number would never surface (D2.3, D2.5).
+    menu = cands[:n_shown]
+    seen = {c.player.espn_id for c in menu}
+    upside = sorted((c for c in cands if c.ros_vor is not None and c.player.espn_id not in seen),
+                    key=lambda c: -(c.ros_vor or 0.0))[:n_upside]
+    for c in upside:
+        c.reasons.append("shown for ROS upside, not this week's gain (D2.3)")
+    menu += upside
 
     plan = WaiverPlan(
         claims=claims[:max_claims],
@@ -335,6 +351,7 @@ def build(
         skipped=skipped,
         priority=waiver_priority,
         adds_left=adds_left,
+        candidates=menu,
     )
     if drop:
         plan.notes.append(f"drop candidate: {drop.name} — {drop_reason}")
@@ -344,4 +361,33 @@ def build(
         plan.notes.append(f"{bench_open} bench spot(s) open — no drop needed")
     if adds_left is not None:
         plan.notes.append(f"§5.7: {adds_left} of {cap} roster adds left this week")
+    plan.notes.append("flags are core's objections, not refusals — the gate only "
+                      "enforces the weekly cap, roster room and §5.5 (D9)")
     return plan
+
+
+def _flag(c: Candidate, *, bench_open: int, urgent: float, waiver_priority: int | None,
+          streamer_floor: int, min_gain: float, band: str) -> None:
+    """Attach every rule that would object. Nothing here refuses."""
+    if c.net_gain <= 0:
+        c.flags.append(f"§5.2 no net starting-lineup gain this week ({c.net_gain:+.1f}/wk)")
+    if c.drop is None and bench_open <= 0:
+        c.flags.append("§5.5 no bench room and nothing droppable")
+    if c.drop_tradeable and c.weekly_gain < urgent:
+        c.flags.append(
+            f"D4.5 drop {c.drop.name} has trade value — propose a trade first; "
+            f"+{c.weekly_gain:.1f}/wk is under the {urgent:.1f} urgent bar")
+    if c.is_free_agent:
+        c.reasons.append("§5.3.2 free agent — costs no waiver priority "
+                         "(still one of the week's adds, §5.7)")
+        return
+    if c.archetype == "streamer" and (waiver_priority or 1) <= streamer_floor:
+        c.flags.append(
+            f"§5.3.3 streamer, and our priority ({waiver_priority}) is too valuable "
+            "to spend on one week")
+    if c.net_gain < min_gain:
+        c.flags.append(
+            f"§5.3.1 +{c.net_gain:.1f}/wk is under the {min_gain:.1f} bar for {band} priority")
+    else:
+        c.reasons.append(f"§5.3.1 +{c.net_gain:.1f}/wk clears the {min_gain:.1f} bar "
+                         f"for {band} priority")

@@ -55,6 +55,19 @@ countering 🔴 never · league settings / chat 🔴 never.
 
 ## Change log — newest first
 
+**2026-09-05 (night) — Reasoning drives; the math annotates (D9).** Pearce's second brief after
+the first read-only sweep: *"mostly reasoning backing the engine rather than straight math."* The
+waiver plan now returns every candidate with `flags` instead of hiding the skips; trade ideas carry
+a market ratio (`core/model/market.py`, ADP → ROS rank over `trades.market_adp_decay_weeks`) and
+their model gain is advisory; `propose_trade` requires `why_they_accept` and refuses below
+`trades.min_market_ratio` 0.8; `research_player` lets the sweep research anyone mid-decision
+(`research_week.on_demand_max` 6). Slack trimmed to what was done; the why lives in
+`data/reasoning/`. New priors: `waivers.candidates_shown` 20, `waivers.upside_shown` 8,
+`trades.gettables_per_team` 8, `model.market_blend_by_position` 0 (measured, see below),
+`model.streaming_bonus_per_week` all 0.0 (measured worse — the benchmark has no wire).
+In-season replacement level at a one-starter position is now the best free agent on the wire
+(`core/model/replacement.py`), no prior involved. Draft post-mortem: `docs/draft-post-mortem-2026.md`.
+
 **2026-09-03 — Doctrine drafted, then revised the same day.** Written from
 `00-inbox/Fantasy Agent.md` and a three-round scoping interview. Revision in round 3 moved it from
 an Astra-run system to a standalone two-layer project in its own repo, put everything on the box,

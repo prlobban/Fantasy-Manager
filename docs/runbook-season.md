@@ -18,11 +18,27 @@ Every command is on the box: `ssh jarvis && cd ~/Fantasy-Manager`.
 
 ## What lands in #fantasy
 
-- **07:00** research summary: dossiers written, vetoes, how many moved a number, cost.
-- **07:30** the roster assessment and every action with its reason. Refusals are posted too, with the gate that refused.
-- **Escalations** as a separate warning: anything the manager wants your read on.
-- **Tuesday** the week's result, efficiency, lessons recorded, and the path to the review.
+Short, by design. What it did, not why.
+
+- **07:00** one line: dossiers written, vetoes, cost.
+- **07:30** one sentence, then one line per move:
+  `✅` done · `⛔` refused (with the gate) · `would:` what it would have done with the switch off.
+  Example:
+  ```
+  Week 2 sweep · READ-ONLY
+  Roster is RB-thin and TE-heavy; one add and one offer would fix both.
+  would: lineup: Chuba Hubbard → RB/WR/TE, Luther Burden III → BE
+  would: add Tyrone Tracy Jr., drop Travis Kelce
+  would: offer to GLOBO GYM: give Kyle Pitts Sr., Justin Herbert / get Garrett Wilson
+  ```
+- **Lineup passes** (Thu/Sun/Mon) post only when something changed.
+- **Needs Pearce** as a separate warning, two sentences and the ask.
+- **Tuesday** one line: result, efficiency, lessons, and the path to the review.
 - **Any cron failure** as an error.
+
+**The why** is in `data/reasoning/<date>-<task>.md` on the box: the roster assessment, every
+action's six reasoning fields, `why_they_accept` on offers, what was refused and by which gate.
+`data/decisions.jsonl` has the same per write, with the numbers.
 
 ## The switch
 
@@ -38,7 +54,8 @@ off by itself.
 
 ## The three things that are yours
 
-1. **Read the 07:30 post.** If a reason does not convince you, it should not
+1. **Read the 07:30 post.** If a move surprises you, open that morning's
+   `data/reasoning/` file. If the reason does not convince you, it should not
    convince the system. Tell Astra; the fix goes in a prior or the doctrine, not
    in a one-off override.
 2. **Apply prior changes.** Tuesday proposes; it never applies (§7.4). Change
@@ -57,9 +74,21 @@ off by itself.
 ./.venv/bin/python scripts/manage.py --task lineup     # lineup only
 tail -f data/manager.log                               # everything cron did
 tail -50 data/decisions.jsonl                          # every action WITH the number behind it
+ls -t data/reasoning/ | head                           # the why, per run, readable
 cat data/lessons.md                                    # what it has learned
 ls data/research-week/                                 # this morning's dossiers
 ```
+
+## How it decides (the short version)
+
+`core` computes; the agent decides (D9). The agent sees every waiver candidate
+with core's number and core's objections as flags, every trade idea with our
+gain and the market read, and it may act against a flag with a written reason.
+It can research any player itself mid-decision (`research_player`, capped at
+six a run). What it cannot reason past: three adds a week, roster room, never
+dropping a top-5 player, the proposal limits, our lineup must improve, the
+market-ratio floor on offers, no top-3 asset for a package, and the trade
+gauntlet on accepts.
 
 ## What is deliberately not proven yet
 

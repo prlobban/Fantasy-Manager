@@ -145,6 +145,33 @@ Every action this system takes must state, in this order:
 
 A move that cannot fill all six is not ready to be made.
 
+## D9 — Reasoning drives; the math annotates *(Pearce, 2026-09-05)*
+
+**D9.1** The other nine managers are humans. A waiver bar, a VOR delta and a fairness formula are
+priors about a market of people, and a market of people is where a formula is weakest. So `core`
+computes and **annotates**; the agent **decides**. Every candidate, idea and offer reaches the agent
+with its number *and* the rules that would object to it, and the agent may act against a flag with
+a written reason. What stays hard in code is only what is irreversible or illegal: the weekly add
+cap, roster room, never dropping a top-N player, the proposal rate limits, our own lineup must
+improve, the market-ratio floor, no protected asset for a package, and the gauntlet on accepts.
+
+**D9.2** Where the math is right, it stays the default: the optimal lineup is expected points across
+legal slots, and an override needs a fact (a DNP, a usage collapse, an extreme matchup) — never a
+hunch. Reasoning earns its keep on the wire and in trades, not by re-deriving a lineup.
+
+**D9.3** A trade is accepted by a person, not by our model of their lineup. The best proxy for a
+person's valuation is **the market**: what the room paid for a player (ADP), decaying into the
+rest-of-season rank as the season goes on. Every offer carries a market ratio — what they receive
+over what they give — and below the floor it reads as a lowball and is refused. Above it, the
+agent's **`why_they_accept`** carries the offer: their hole, their bye crunch, their 0-3, what they
+paid. Tuesday grades that sentence against what the manager actually did.
+
+**D9.4** When a decision turns on a player the morning research skipped, the agent researches him
+*before* deciding (`research_player`), asking the actual question. A decision made on a blank is a
+guess with a citation.
+
+**D9.5** Slack gets what was done. The reasoning is logged, in full, where it can be read and graded.
+
 ---
 
 ## Sources

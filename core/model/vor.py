@@ -27,6 +27,7 @@ def compute_vor(
     points_of: dict[int, float],
     week: int | None = None,
     availability_of: dict[int, float] | None = None,
+    weeks: float | None = None,
 ) -> dict[int, float]:
     """VOR for every player in the pool, keyed by espn_id.
 
@@ -61,7 +62,8 @@ def compute_vor(
                         if (a := availability_of.get(p.espn_id, 1.0)) > 0 else 0.0)
             for p in pool
         }
-        baseline = replacement_baseline(pool, settings, week=week, points_of=raw_of)
+        baseline = replacement_baseline(pool, settings, week=week, points_of=raw_of,
+                                        weeks=weeks)
         out: dict[int, float] = {}
         for p in pool:
             a = availability_of.get(p.espn_id, 1.0)
@@ -78,7 +80,8 @@ def compute_vor(
             out[p.espn_id] = a * vor_for(raw_of.get(p.espn_id, 0.0), p.pos, baseline)
         return out
 
-    baseline = replacement_baseline(pool, settings, week=week, points_of=points_of)
+    baseline = replacement_baseline(pool, settings, week=week, points_of=points_of,
+                                    weeks=weeks)
     return {
         p.espn_id: vor_for(points_of.get(p.espn_id, 0.0), p.pos, baseline)
         for p in pool

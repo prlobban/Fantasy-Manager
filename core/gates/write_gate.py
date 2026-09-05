@@ -134,11 +134,14 @@ def execute(
     receipt. It is never called unless the gate allows.
     """
     gate = check(action, skip_health=skip_health)
+    # The public args ride along so the sweep digest can say WHAT was done
+    # (or would have been) without re-deriving it from the model's prose.
+    extra = {"args": _public_args(action.args)}
 
     if not gate.allowed:
         decisions.record(action.kind, cites=action.cites, reason=action.reason,
                          predicted=predicted, alternative=alternative,
-                         executed=False, gate=gate)
+                         executed=False, gate=gate, extra=extra)
         log.warning("REFUSED %s by %s — %s", action.kind.value, gate.refused_by, gate.reason)
         return gate, None
 
@@ -146,7 +149,7 @@ def execute(
         dry = GateResult(allowed=True, refused_by=None, reason="dry-run: not executed")
         decisions.record(action.kind, cites=action.cites, reason=action.reason,
                          predicted=predicted, alternative=alternative,
-                         executed=False, gate=dry)
+                         executed=False, gate=dry, extra=extra)
         log.info("DRY-RUN %s — would execute: %s", action.kind.value, action.reason)
         return dry, None
 
@@ -156,12 +159,23 @@ def execute(
         fail = GateResult(allowed=True, refused_by=None, reason=f"execution failed: {e}")
         decisions.record(action.kind, cites=action.cites, reason=action.reason,
                          predicted=predicted, alternative=alternative,
-                         executed=False, gate=fail)
+                         executed=False, gate=fail, extra=extra)
         log.error("FAILED %s: %s", action.kind.value, e)
         raise
 
     decisions.record(action.kind, cites=action.cites, reason=action.reason,
                      predicted=predicted, alternative=alternative,
-                     executed=True, gate=gate, receipt=str(receipt) if receipt else None)
+                     executed=True, gate=gate, receipt=str(receipt) if receipt else None,
+                     extra=extra)
     log.info("EXECUTED %s — %s", action.kind.value, action.reason)
     return gate, receipt
+
+
+def _public_args(args: dict | None) -> dict:
+    """The action's args minus anything that is not plain data (the gauntlet
+    result object on an accept)."""
+    out = {}
+    for k, v in (args or {}).items():
+        if isinstance(v, (str, int, float, bool, type(None), list, dict)):
+            out[k] = v
+    return out

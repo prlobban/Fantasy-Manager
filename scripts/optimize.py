@@ -147,21 +147,26 @@ def main() -> int:
     args = ap.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(message)s")
 
-    log.info("loading seasons and boards...")
-    h = Harness()
-
     if args.config:
+        # The harness is built INSIDE the override, so a prior that acts at
+        # board-build time (the market blend, replacement level) is scored
+        # too — not only the picker weights. Found 2026-09-05 when two blend
+        # modes scored identically because the boards were built first.
         over = {}
         for kv in args.config:
             k, v = kv.split("=")
             over[k.replace(".", "__")] = float(v)
         with overridden(**over):
+            log.info("loading seasons and boards under %s...", args.config)
+            h = Harness()
             sc = h.evaluate()
         print(f"\n{args.config}\n  {sc.line()}")
         for k, x in sorted(sc.blocks.items()):
             print(f"    {k:<16} finish {x[0]:.2f}  wins {x[1]}/10  {x[2]:+7.1f}")
         return 0
 
+    log.info("loading seasons and boards...")
+    h = Harness()
     baseline = h.evaluate()
     log.info("BASELINE  %s", baseline.line())
     for k, x in sorted(baseline.blocks.items()):

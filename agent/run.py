@@ -68,10 +68,16 @@ class TaskSpec:
 
 
 TASKS: dict[str, TaskSpec] = {
-    "daily": TaskSpec("daily.md", "actions.json", "mcp__fantasy__*", True, True),
-    "tuesday": TaskSpec("tuesday.md", "review.json", "mcp__fantasy__*", True, True),
+    # The sweep may now research players itself mid-run (research_player,
+    # D9), and each of those is a tool turn, so the turn budget is well
+    # above the 11 the first live sweep used with no research at all.
+    "daily": TaskSpec("daily.md", "actions.json", "mcp__fantasy__*", True, True,
+                      max_turns=40),
+    "tuesday": TaskSpec("tuesday.md", "review.json", "mcp__fantasy__*", True, True,
+                        max_turns=30),
     "incoming_trade": TaskSpec(
-        "incoming_trade.md", "actions.json", "mcp__fantasy__*", True, True),
+        "incoming_trade.md", "actions.json", "mcp__fantasy__*", True, True,
+        max_turns=20),
 
     # §3.2 — one research agent per player. The web, and nothing else: with no
     # MCP config it cannot reach set_lineup or any other write, by absence
@@ -204,6 +210,11 @@ def _validate(payload: dict, task: str) -> list[str]:
                     v = a.get(f)
                     if not isinstance(v, str) or len(v.strip()) < _MIN_REASON_CHARS[f]:
                         problems.append(f"action {i}: D8 field {f!r} missing or too thin")
+            # D9 — an offer to a human carries the reason that human says yes.
+            if a.get("tool") == "propose_trade":
+                w = a.get("why_they_accept")
+                if not isinstance(w, str) or len(w.strip()) < 30:
+                    problems.append(f"action {i}: propose_trade needs why_they_accept (D9)")
         if task == "daily" and not (payload.get("roster_assessment") or "").strip():
             problems.append("no roster_assessment — the sweep must evaluate the roster every run")
 
@@ -334,7 +345,7 @@ def run(task: str, packet: dict, *, dry_run: bool = False,
         with subprocess.Popen(
             cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
             stderr=subprocess.PIPE, text=True, encoding="utf-8",
-            cwd=str(REPO_ROOT),
+            cwd=str(REPO_ROOT), env=_child_env(),
         ) as proc:
             if proc_box is not None:
                 proc_box["proc"] = proc
@@ -392,6 +403,22 @@ def run(task: str, packet: dict, *, dry_run: bool = False,
                            transcript=transcript, usage=usage)
 
     return AgentResult(True, task, payload, raw, transcript=transcript, usage=usage)
+
+
+def _child_env() -> dict[str, str]:
+    """The environment for a `claude -p` child.
+
+    A research run launched from INSIDE the sweep (research_player, D9) is
+    claude spawning core's MCP server spawning claude. The outer CLI marks
+    its children with CLAUDECODE / CLAUDE_CODE_* variables; a nested CLI that
+    sees them may refuse to start or route its output to the parent. They
+    are stripped so every run starts clean, whoever launched it.
+    """
+    import os
+
+    env = {k: v for k, v in os.environ.items()
+           if k != "CLAUDECODE" and not k.startswith("CLAUDE_CODE_")}
+    return env
 
 
 def _extract(raw: str) -> dict | None:

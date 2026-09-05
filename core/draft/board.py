@@ -84,6 +84,7 @@ def build(
         pool,
         market.ranks_from_raw(raw_entries, str(priors().get("model.market_rank_type"))),
         float(priors().get("model.market_blend")),
+        by_position=bool(priors().get("model.market_blend_by_position")),
     )
 
     # ── injury history, joined on ESPN id with a name fallback ───────────────
