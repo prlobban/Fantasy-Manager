@@ -339,7 +339,9 @@ def build(
     # value that the weekly number would never surface (D2.3, D2.5).
     menu = cands[:n_shown]
     seen = {c.player.espn_id for c in menu}
-    upside = sorted((c for c in cands if c.ros_vor is not None and c.player.espn_id not in seen),
+    # K and D/ST are streamed, never stashed (D6.1), so they are not "upside".
+    upside = sorted((c for c in cands if c.ros_vor is not None and c.player.espn_id not in seen
+                     and c.player.pos not in (Pos.K, Pos.DST)),
                     key=lambda c: -(c.ros_vor or 0.0))[:n_upside]
     for c in upside:
         c.reasons.append("shown for ROS upside, not this week's gain (D2.3)")
@@ -381,7 +383,10 @@ def _flag(c: Candidate, *, bench_open: int, urgent: float, waiver_priority: int 
         c.reasons.append("§5.3.2 free agent — costs no waiver priority "
                          "(still one of the week's adds, §5.7)")
         return
-    if c.archetype == "streamer" and (waiver_priority or 1) <= streamer_floor:
+    # §5.3.3 is about one-week plays at streamable positions. A 6-point RB is
+    # a stash, not a streamer, and the flag would only mislead.
+    if (c.archetype == "streamer" and c.player.pos in (Pos.K, Pos.DST, Pos.QB, Pos.TE)
+            and (waiver_priority or 1) <= streamer_floor):
         c.flags.append(
             f"§5.3.3 streamer, and our priority ({waiver_priority}) is too valuable "
             "to spend on one week")
