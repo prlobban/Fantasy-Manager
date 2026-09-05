@@ -71,7 +71,7 @@ def priors() -> Priors:
 def overridden(**dotted: Any):
     """Temporarily change priors, then restore them exactly.
 
-    For the backtest sweep (scripts/backtest_tune.py) and for tests. A
+    For the parameter sweep (scripts/optimize.py) and for tests. A
     coefficient that cannot be varied cannot be shown to be right, and the
     alternative — editing priors.yaml between runs — leaves the file wrong if a
     sweep dies halfway through.

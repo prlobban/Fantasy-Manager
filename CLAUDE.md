@@ -11,6 +11,7 @@ irreversible writes.**
 - **`docs/operating-log-2026-season.md` is the state.** Config, change log, and an
   explicit list of settled questions **not to reopen**.
 - **`docs/build-plan.md`** is the engineering plan: every file, why it exists.
+- **`docs/runbook-draft-day.md`** is draft day, step by step. `/fantasy-draft` loads it.
 - `/fantasy` is the primer. It loads, orients, and stops.
 
 ## The two layers (§10)
@@ -56,13 +57,18 @@ Every write goes through `core/gates/write_gate.py`. Nothing calls
 
 ```
 core/espn/     read client, settings, players, league state, health
-core/data/     nflverse, ADP, Vegas, news  (nflreadpy — NOT the archived nfl_data_py)
+core/data/     nflverse (nflreadpy — NOT the archived nfl_data_py)
 core/model/    the valuation engine. Pure functions. One model, four consumers (§2)
-core/draft/    board, survival, room, picker, reader, queue, run
+core/proj/     our own projection model — fitted, measured, OFF (projection_blend 0.0)
+core/draft/    board, survival, room, picker, reader, queue, clock, verdict, run
+core/backtest/ replay real seasons; the 40-seat arena vs ESPN autopick
 core/browser/  Playwright session, selectors, actions
-core/manager/  lineup, waivers, trades_out, gauntlet, review
+core/manager/  lineup, waivers, trades_out, gauntlet, review (review is not yet wired)
 core/gates/    kill switch, rate limits, write_gate
+core/state/    store, decisions log, draft log
 agent/         prompts, schemas, packet builder, claude -p runner
+scripts/       entry points; draft_day.sh and practice.sh are the box's two buttons
+docs/          playbook (law) · operating log (state) · runbook-draft-day · the *-plan measurements
 ```
 
 ## Testing

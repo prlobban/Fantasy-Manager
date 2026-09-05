@@ -123,7 +123,7 @@ def rank(
 
     no_k_dst_until = int(p.get("draft.no_kicker_dst_until_last_n_rounds"))
     # The bonus weights. Priors rather than literals so the backtest can sweep
-    # them (scripts/backtest_tune.py) — a coefficient nobody can vary is a
+    # them (scripts/optimize.py) — a coefficient nobody can vary is a
     # coefficient nobody can show to be right.
     w_scarcity = float(p.get("draft.scarcity_weight"))
     w_tier = float(p.get("draft.tier_break_weight"))

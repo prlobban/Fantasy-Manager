@@ -100,7 +100,7 @@ already close the gap.
 1. Load both seasons once; build one board per season per config.
 2. Evaluate a config = all 40 paired seats → `(wins, mean delta, mean rank)`.
 3. Search one parameter at a time (coordinate descent), the same discipline as
-   `backtest_tune.py`: 2 seasons is not enough to fit many parameters jointly.
+   the retired `backtest_tune.py` (hindsight objective; superseded by this arena): 2 seasons is not enough to fit many parameters jointly.
 4. **Accept a change only if it improves all four blocks** — 2024/STANDARD,
    2024/PPR, 2025/STANDARD, 2025/PPR. A change that wins on the average by winning
    one block and losing another is a fit to one season, and is rejected.

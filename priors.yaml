@@ -53,7 +53,7 @@ draft:
   # §3.5/§3.6 — the picker's bonus weights, each a share of the player's own
   # VOR. These lived as literals inside picker.py until the backtest needed to
   # sweep them: a coefficient that cannot be varied cannot be shown to be
-  # right. Swept by scripts/backtest_tune.py — do not retune these by feel.
+  # right. Swept by scripts/optimize.py — do not retune these by feel.
   scarcity_weight: 0.35        # cost of waiting at this position
   tier_break_weight: 0.12      # per player missing from a 3-deep top tier
   room_demand_per_team: 0.02   # per team ahead of us that needs this position
