@@ -96,7 +96,7 @@ def test_ir_player_is_not_a_drop_candidate():
     # only three players, all "protected" by top-N — so use a bigger roster.
     roster += [Player(espn_id=i, name=f"p{i}", pos=Pos.WR, pro_team="A") for i in range(4, 10)]
     vals.update({i: _val(i, 5 + i, vor=i) for i in range(4, 10)})
-    drop, _cost, _why = waivers.choose_drop(roster, vals, settings)
+    drop, _cost, _why, _tradeable = waivers.choose_drop(roster, vals, settings)
     assert drop is not None
     assert drop.espn_id != 2, "an IR player does not occupy a bench spot and is never the drop"
 

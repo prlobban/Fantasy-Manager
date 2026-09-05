@@ -138,6 +138,10 @@ CONFIRM_BUTTON = "button:has-text('Confirm'), button:has-text('Yes'), button:has
 TRADE_PROPOSE_BUTTON = "button:has-text('Propose Trade'), a:has-text('Propose Trade')"
 TRADE_ACCEPT_BUTTON = "button:has-text('Accept')"
 TRADE_REJECT_BUTTON = "button:has-text('Reject'), button:has-text('Decline')"
+TRADE_PLAYER_CHECKBOX = "input[type=checkbox], [role=checkbox]"
+TRADE_REVIEW_BUTTON = "button:has-text('Review Trade'), button:has-text('Review')"
+TRADE_SEND_BUTTON = ("button:has-text('Send Trade'), button:has-text('Send Offer'), "
+                     "button:has-text('Propose')")
 
 # ── helpers ──────────────────────────────────────────────────────────────────
 

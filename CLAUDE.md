@@ -12,6 +12,11 @@ irreversible writes.**
   explicit list of settled questions **not to reopen**.
 - **`docs/build-plan.md`** is the engineering plan: every file, why it exists.
 - **`docs/runbook-draft-day.md`** is draft day, step by step. `/fantasy-draft` loads it.
+- **`docs/fantasy-doctrine.md`** is the craft (D-sections), inlined with the playbook into every
+  deciding agent run. **`docs/runbook-season.md`** is the in-season cadence and what is Pearce's.
+- **Two hard limits, in code (2026-09-05):** three roster adds a week (`§5.7`), three trade
+  proposals a week and one a day (`§6.1`). Every manager action carries the six D8 reasoning
+  fields or `agent/run.py` rejects it.
 - `/fantasy` is the primer. It loads, orients, and stops.
 
 ## The two layers (§10)
@@ -63,7 +68,8 @@ core/proj/     our own projection model — fitted, measured, OFF (projection_bl
 core/draft/    board, survival, room, picker, reader, queue, clock, verdict, run
 core/backtest/ replay real seasons; the 40-seat arena vs ESPN autopick
 core/browser/  Playwright session, selectors, actions
-core/manager/  lineup, waivers, trades_out, gauntlet, review (review is not yet wired)
+core/manager/  lineup, waivers, trades_out, gauntlet, roster (shape), research (morning
+               dossiers), review + tuesday (the §7 loop)
 core/gates/    kill switch, rate limits, write_gate
 core/state/    store, decisions log, draft log
 agent/         prompts, schemas, packet builder, claude -p runner

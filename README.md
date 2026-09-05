@@ -26,7 +26,9 @@ dead is still a competent draft.
 |---|---|
 | `docs/fantasy-playbook.md` | the rules, numbered §1–§10 — cite, don't paraphrase |
 | `docs/operating-log-2026-season.md` | league config, IDs, change log, settled questions |
-| `docs/runbook-draft-day.md` | **draft day, step by step** |
+| `docs/runbook-draft-day.md` | draft day, step by step |
+| `docs/runbook-season.md` | **the season: what wakes when, what lands in Slack, what is yours** |
+| `docs/fantasy-doctrine.md` | the craft, D1–D8, sourced; inlined into every deciding agent run |
 | `docs/build-plan.md` | every file and why it exists |
 | `docs/*-plan.md` | the measurements: backtest, autopick benchmark, draft optimisation, projection model |
 | `priors.yaml` | every tunable, each citing its § — nothing hardcodes a threshold |
@@ -53,7 +55,10 @@ ssh jarvis && cd ~/Fantasy-Manager          # the box (~/.ssh/config on the lapt
 | Research pass (dossiers → overrides) | `scripts/research.py` · `--refresh-top 15` after the order lock |
 | Practice draft, random seat | `scripts/practice.sh [slot]` |
 | **Draft day** | `scripts/draft_day.sh start\|status\|stop` |
+| Morning research (in-season) | `scripts/research_week.py` |
 | Daily sweep, no writes | `scripts/manage.py --dry-run --no-agent` |
+| Tuesday review | `scripts/manage.py --tuesday` |
+| Cron entry point | `scripts/cron_manage.sh research\|sweep\|tuesday\|lineup` |
 | Benchmark vs ESPN autopick | `scripts/benchmark.py` |
 | Re-find ESPN selectors | `scripts/discover_selectors.py --draft --headed` (laptop only) |
 | Tests | `python -m pytest -q` |

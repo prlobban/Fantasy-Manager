@@ -1,53 +1,70 @@
-# Daily sweep (§1.3)
+# Daily sweep (§1.3, D2 to D6)
 
-Run the morning pass over the roster. In order:
+The morning pass. This morning's research is already in the packet under
+`research` and already folded into the valuations. Work in this order:
 
-1. `get_settings` — always first (§3.1).
-2. `get_roster` and `get_matchup` — where we stand this week.
-3. `get_lineup_plan` — core's optimal lineup, the §4.2 variance call, and the
-   exact moves. Read the `changes` list; that is the proposal.
-4. `get_waiver_plan` — candidates already scored against §5. Note the
-   `skipped` list: those are decisions too, and often the right one.
-5. `get_pending_offers` — for each one, `run_gauntlet(offer_id)` and handle it
-   per §6.8.
+1. `get_settings`, always first (§3.1).
+2. Read `us.roster`, `roster_shape`, `lessons`, and `research`. Write the
+   `roster_assessment` (D5, D7.4) before touching anything.
+3. `get_lineup_plan`: core's optimal lineup with the §4.2 variance call and
+   the exact moves. The `changes` list is the proposal.
+4. `get_waiver_plan`: candidates scored against §5, with the drop each would
+   require and whether that drop is `tradeable` (D4.5). `adds_left_this_week`
+   tells you how many of the three you have.
+5. `get_trade_ideas`: outgoing proposals core would make, both sides' gain,
+   and what each does to our roster shape. `proposals_left_today` and
+   `proposals_left_this_week` are the §6.1 limits.
+6. `get_pending_offers`: for each, `run_gauntlet(offer_id)`; handle per §6.8.
 
-**Scope.** The packet carries `scope`. `all` is the normal sweep. `lineup`
-(the Sunday pass) means the lineup ONLY — no waiver moves, no trade actions,
-even if you can see them; say so in `no_action_reason` if the lineup is
-already optimal.
+**Scope.** `all` is the normal sweep. `lineup` (the Thursday, Sunday and
+Monday passes) means the lineup ONLY: no adds, no trades, even if you can see
+them.
 
-## What to actually do
+## Lineup (§4, D3)
 
-**Lineup (§4).** If `changes` is empty, do nothing and say so. If it is not,
-call `set_lineup` with those moves. Two things to check before you do:
-- Does any assignment have `player: null`? That is an unfillable slot and it is
-  a bigger problem than any swap — surface it.
-- Does a change bench a first-three-rounds player? §4.5 says that needs a
-  written reason. If you cannot write one, the model is probably wrong, not the
-  player.
+If `changes` is empty, say so. If not, `set_lineup` with those moves, unless
+this morning's research contradicts them: a DNP the projection has not
+absorbed, a usage collapse, a matchup the dossier calls extreme. Then override
+and say exactly which dossier fact you are acting on (§2.8, D1.4). A `player:
+null` assignment is an unfillable slot and outranks every swap. Benching a
+first-three-round pick needs the written reason of §4.5.
 
-**Waivers (§5).** Free adds are free (§5.3.2) — take them if they clear §5.2.
-Claims cost our queue position, so apply §5.3.1's bar for the priority we hold.
-Never spend a top-3 claim on a streamer (§5.3.3). Remember every add needs a
-drop with only four bench spots, and the drop's value is part of the price.
+## Waivers (§5, D2)
 
-**Trades (§6.8).** The gauntlet decides; you narrate. Write the §6.8.3 sentence
-in your own words — *why did this manager send this offer?* If you cannot write
-a coherent one, that itself is the answer. A 13/13 pass → `accept_trade`
-(which re-runs the gauntlet in code before anything happens). Anything else →
-`reject_trade` citing the failed gate. Never accept anything the gauntlet
-rejected; you cannot, and trying wastes a turn. Outgoing ideas come from
-`get_trade_ideas`; there is no propose tool — post a good one with `notify`.
+Free adds cost no priority but DO cost one of the three weekly adds. A claim
+costs both. Ask of every add: does he change our *starting* lineup, this week
+or ROS (D2.4)? Is this a role change or one box score (D2.2)? Are we a
+must-win roster this week or a strong one (D2.3)? Is the drop a player another
+team would start? Then he is a trade chip, not a cut (D4.5), and you propose
+a trade instead unless the add clears `season.urgent_add_weekly_gain`.
 
-## News (§2.8)
+## Trades (§6, D4)
 
-The packet carries recent news on our players. **The model is the prior; the
-news is the update.** A depth-chart change or a Wednesday DNP beats a projection
-computed before it. If they disagree and two sources confirm the news, the news
-wins — but say that you are overriding, and why.
+`get_trade_ideas` is where roster-shape problems get fixed. A one-slot
+position holding surplus (three TEs, two QBs) is trade capital (D5.2). A good
+proposal addresses a need on both sides (D4.4) and survives the group-chat test
+(D4.6). `propose_trade` is a real write: it goes to the other manager. Use one
+of the three only for an offer you would send with your name on it.
+
+Incoming offers: the gauntlet decides, you narrate. Write the §6.8.3 sentence.
+13/13 means `accept_trade` (re-run in code). Anything else means
+`reject_trade` with the failing gate.
+
+## Every action, the D8 contract
+
+`reason` (the move and the number) · `short_term` · `long_term` ·
+`alternative` · `evidence` (with source) · `would_be_wrong_if`. Concrete. Not
+"his projection is higher" but *why*: usage, role, matchup, health, and over
+what horizon.
+
+## Escalate
+
+Anything you want Pearce's read on goes in `escalate`: a trade you would send
+but are not sure of, a stud the model wants to bench, a roster problem no tool
+can fix. It is posted to him on Slack.
 
 ## Output
 
-Return the actions schema. Every action needs `cites`. If nothing should
-happen, return an empty `actions` list and fill in `no_action_reason` — that is
-a complete, correct answer on most days.
+The actions schema. Every action fully reasoned. If nothing should happen,
+`actions` is empty and `no_action_reason` says why, and `roster_assessment`
+is still written.

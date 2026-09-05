@@ -41,10 +41,19 @@ def _snap(refresh: bool = False) -> ls_mod.LeagueState:
 
 
 def _vals(state: ls_mod.LeagueState, window: str = "week"):
+    """Valuations with this morning's research folded in (D1.4), same as the
+    packet — the tools and the packet must never disagree."""
+    from core.manager import research as R
+    from core.model.priors import priors
+
+    dossiers = R.load_all(week=state.week)
     return value_pool(
         state.all_players(), state.facts.settings,
         window=window, week=state.week if window == "week" else None,
         weeks_remaining=max(1, state.facts.settings.regular_season_weeks - state.week + 1),
+        current_week=state.week,
+        contexts=R.contexts(dossiers, window=window),
+        override_cap=float(priors().get("model.override_cap")),
     )
 
 
@@ -176,6 +185,8 @@ def get_waiver_plan() -> str:
     """
     s = _snap()
     v = _vals(s)
+    ros = _vals(s, window="ros")
+    from core.gates import rate_limits
     from core.manager import waivers as w
 
     plan = w.build(
@@ -184,28 +195,69 @@ def get_waiver_plan() -> str:
         on_waivers=s.on_waivers,
         bench_open=s.bench_open,
         current_week=s.week,
+        adds_left=rate_limits.adds_left(),
+        ros_valuations=ros,
     )
+
+    def _cand(c):
+        return {"name": c.player.name, "espn_id": c.player.espn_id,
+                "pos": c.player.pos.value, "weekly_gain": round(c.net_gain, 2),
+                "replaces": c.replaces.name if c.replaces else None,
+                "drop": c.drop.name if c.drop else None,
+                "drop_id": c.drop.espn_id if c.drop else None,
+                "drop_tradeable": c.drop_tradeable,
+                "archetype": c.archetype, "why": c.reasons}
+
     return _ok(
         priority=plan.priority,
-        free_adds=[
-            {"name": c.player.name, "espn_id": c.player.espn_id,
-             "pos": c.player.pos.value, "weekly_gain": round(c.net_gain, 2),
-             "drop": c.drop.name if c.drop else None,
-             "drop_id": c.drop.espn_id if c.drop else None,
-             "archetype": c.archetype, "why": c.reasons}
-            for c in plan.free_adds
-        ],
-        claims=[
-            {"name": c.player.name, "espn_id": c.player.espn_id,
-             "pos": c.player.pos.value, "weekly_gain": round(c.net_gain, 2),
-             "drop": c.drop.name if c.drop else None,
-             "drop_id": c.drop.espn_id if c.drop else None,
-             "archetype": c.archetype, "why": c.reasons}
-            for c in plan.claims
-        ],
+        adds_left_this_week=plan.adds_left,
+        free_adds=[_cand(c) for c in plan.free_adds],
+        claims=[_cand(c) for c in plan.claims],
         skipped=[{"name": c.player.name, "why": why} for c, why in plan.skipped[:10]],
         notes=plan.notes,
     )
+
+
+@mcp.tool()
+def get_roster_shape() -> str:
+    """Where the roster is fat and thin by position (D5): surplus at a
+    one-slot position is trade capital, a shortage costs a starting slot on
+    the first bye or injury."""
+    s = _snap()
+    from core.manager import roster as roster_mod
+
+    shape = roster_mod.analyse(s.me.roster, _vals(s, window="ros"), s.facts.settings)
+    return _ok(
+        summary=shape.summary(),
+        by_position={
+            pos.value: {"have": x.have, "starters": x.starters, "cover": x.cover,
+                        "delta": x.delta, "verdict": x.verdict,
+                        "surplus_players": [p.name for p in x.surplus_players]}
+            for pos, x in shape.by_pos.items()
+        },
+        notes=shape.notes,
+    )
+
+
+@mcp.tool()
+def get_research(espn_id: int | None = None) -> str:
+    """This morning's dossiers (D1, D3.1): status and practice, usage trend,
+    matchup, analyst read, news, sources — and what core did with the
+    multipliers. One player, or everyone researched."""
+    s = _snap()
+    from core.manager import research as R
+
+    ds = R.load_all(week=s.week)
+    return _ok(count=len(ds), dossiers=R.facts(ds, [espn_id] if espn_id else None))
+
+
+@mcp.tool()
+def get_lessons() -> str:
+    """What this system has learned on previous Tuesdays (D7). A lesson that
+    applies today is cited like a rule."""
+    from core.state import lessons
+
+    return _ok(lessons=lessons.read())
 
 
 def _offers(s: ls_mod.LeagueState):
@@ -317,27 +369,32 @@ def run_gauntlet(offer_id: str) -> str:
 
 @mcp.tool()
 def get_trade_ideas() -> str:
-    """Outgoing proposals core would make (§6.1–§6.7): complementary needs,
-    both sides gain, rate limits noted.
+    """Outgoing proposals core would make (§6.1–§6.7, D4, D5): both sides
+    gain in ROS starting points, and what each does to our roster shape.
 
-    READ ONLY. Proposing on ESPN is not exposed in this version — surface a
-    good one with `notify` and Pearce sends it. Nothing here is a write.
+    Read-only. `propose_trade` is the write, and it re-runs the both-sides
+    value test in code before anything is sent.
     """
     s = _snap()
+    from core.gates import rate_limits
     from core.manager import trades_out as T
 
     v = _vals(s, window="ros")
     others = {tid: (t.name, t.roster) for tid, t in s.teams.items() if tid != s.my_team_id}
     props = T.build(s.me.roster, others, v, s.facts.settings)
+    day_left, week_left = rate_limits.proposals_left()
     return _ok(
         count=len(props),
+        proposals_left_today=day_left,
+        proposals_left_this_week=week_left,
         proposals=[{
             "to_team": p.to_team, "to_team_name": p.to_team_name,
-            "give": [x.name for x in p.give], "get": [x.name for x in p.get],
+            "give": [{"espn_id": x.espn_id, "name": x.name, "pos": x.pos.value} for x in p.give],
+            "get": [{"espn_id": x.espn_id, "name": x.name, "pos": x.pos.value} for x in p.get],
             "our_gain": p.our_gain, "their_gain": p.their_gain,
-            "fairness": p.fairness, "rationale": p.rationale, "warnings": p.warnings,
+            "fairness": p.fairness, "shape_effect": p.shape_effect,
+            "rationale": p.rationale, "warnings": p.warnings,
         } for p in props],
-        note="propose_trade is not a tool: post the best idea with notify for Pearce to send",
     )
 
 
@@ -432,11 +489,79 @@ def add_drop(add_id: int, drop_id: int | None, reason: str, cites: list[str]) ->
 
     gate, receipt = write_gate.execute(action, perform, skip_health=True)
     if gate.allowed and receipt:
+        from core.gates import rate_limits
+
+        rate_limits.record_add(add_id, drop_id)
         _notify("action", f"{'Claimed' if kind is ActionKind.WAIVER_CLAIM else 'Added'} "
                           f"{add_p.name}",
-                f"{reason}\ndropped: {drop_p.name if drop_p else '—'}\n{receipt}")
+                f"{reason}\ndropped: {drop_p.name if drop_p else '—'}\n"
+                f"adds left this week: {rate_limits.adds_left()}\n{receipt}")
     return _ok(allowed=gate.allowed, refused_by=gate.refused_by,
                reason=gate.reason, receipt=str(receipt) if receipt else None)
+
+
+@mcp.tool()
+def propose_trade(to_team: int, give_ids: list[int], get_ids: list[int],
+                  reason: str, cites: list[str]) -> str:
+    """Send an outgoing trade offer. AUTO inside §6.1–§6.7: rate-limited
+    (1/day, 3/week, 1 open per manager, no re-propose inside 14 days) and the
+    §6.2/§6.3 both-sides value test is re-run HERE in code — an offer that
+    does not help the other side is refused before it is sent.
+
+    This goes to another human. Use one of the three only for an offer you
+    would send with your name on it (D4.6).
+    """
+    from core.gates import rate_limits
+    from core.manager import trades_out as T
+
+    s = _snap(refresh=True)
+    them = s.teams.get(to_team)
+    if them is None or to_team == s.my_team_id:
+        return _ok(allowed=False, reason=f"no other team with id {to_team}")
+    by_id = {p.espn_id: p for p in s.all_players()}
+    give = [by_id[i] for i in give_ids if i in by_id]
+    get = [by_id[i] for i in get_ids if i in by_id]
+    if len(give) != len(give_ids) or len(get) != len(get_ids) or not give or not get:
+        return _ok(allowed=False, reason="a player in the offer is not in the league pool")
+    mine = {p.espn_id for p in s.me.roster}
+    theirs = {p.espn_id for p in them.roster}
+    if not all(p.espn_id in mine for p in give) or not all(p.espn_id in theirs for p in get):
+        return _ok(allowed=False, reason="give must be ours and get must be theirs")
+
+    v = _vals(s, window="ros")
+    ok, why, ours, theirs_gain = T.value_check(
+        s.me.roster, them.roster, give, get, v, s.facts.settings)
+    if not ok:
+        return _ok(allowed=False, refused_by="§6.2/§6.3", reason=why)
+
+    action = Action(
+        kind=ActionKind.PROPOSE_TRADE,
+        args={"to_team": to_team, "give": give_ids, "get": get_ids},
+        cites=cites or ["§6.2"], reason=reason,
+    )
+
+    def perform():
+        from core.browser import actions as A
+        from core.browser.session import EspnSession
+
+        with EspnSession(headless=True) as sess:
+            return A.propose_trade(
+                sess, s.facts.settings.league_id, s.facts.settings.season, to_team,
+                [(p.espn_id, p.name) for p in give], [(p.espn_id, p.name) for p in get],
+            )
+
+    gate, receipt = write_gate.execute(
+        action, perform, skip_health=True,
+        predicted={"our_gain_ros": round(ours, 1), "their_gain_ros": round(theirs_gain, 1)},
+    )
+    if gate.allowed and receipt:
+        rate_limits.record_proposal(to_team, give_ids, get_ids)
+        day_left, week_left = rate_limits.proposals_left()
+        _notify("action", f"Proposed trade to {them.name}",
+                f"give: {', '.join(p.name for p in give)}\nget: {', '.join(p.name for p in get)}\n"
+                f"{why}\n{reason}\nproposals left: {day_left} today, {week_left} this week\n{receipt}")
+    return _ok(allowed=gate.allowed, refused_by=gate.refused_by, reason=gate.reason,
+               value_check=why, receipt=str(receipt) if receipt else None)
 
 
 @mcp.tool()

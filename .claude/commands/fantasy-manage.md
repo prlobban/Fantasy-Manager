@@ -1,74 +1,63 @@
 ---
-description: 'Season manager runbook — run a sweep by hand, read the log, flip the switch.'
+description: 'Season manager context — the cadence, the limits, the reasoning contract, and how to drive a sweep by hand.'
 ---
 
-The in-season loop. Normally runs itself on the box at 07:30 CT; this is how to
-drive it by hand or work out what it did.
+The in-season loop. It runs itself on the box by cron (`scripts/cron_manage.sh`);
+`docs/runbook-season.md` is the procedure and Pearce runs it. This file is what
+a Claude session needs beyond it.
 
-> ⚠️ **A bare `python` does not work.** On Windows the Microsoft Store alias
-> intercepts it. Everywhere below, `python` means `.\.venv\Scripts\python.exe`
-> on the laptop and `./.venv/bin/python` on the box. See `RUNNING.md`.
+`python` means `./.venv/bin/python` on the box, `.\.venv\Scripts\python.exe` on
+the laptop.
 
-## Run a sweep
+## The cadence (CT)
 
-```
-python scripts/manage.py --dry-run --no-agent   # core's plan only, no model, no writes
-python scripts/manage.py --dry-run              # + the agent, still no writes
-python scripts/manage.py                        # live
-python scripts/manage.py --tuesday              # the weekly review (§7)
-```
+| When | Task | Writes |
+|---|---|---|
+| 07:00 daily | `research_week.py` — a dossier per rostered player, waiver candidate, trade target | none |
+| 07:30 daily | `manage.py` — assessment, lineup, adds, proposals, incoming offers | lineup · add (3/wk) · propose (3/wk, 1/day) · accept/reject |
+| 07:30 Tue | `manage.py --tuesday`, then the sweep | history file, `data/lessons.md` |
+| Thu 18:30 · Sun 11/15/19 · Mon 18:30 | `manage.py --task lineup` | lineup only |
 
-**Start with `--dry-run --no-agent`.** That prints core's own lineup and waiver
-plans with no model involved. If those look wrong, the agent cannot fix it and
-the bug is in `core`.
+## What is enforced in code, not in the prompt
 
-## Reading the output
+- **§5.7** three roster adds per rolling week — `write_gate` refuses the fourth.
+- **§6.1** three proposals a week, one a day, one open per manager, no re-propose
+  inside 14 days; **§6.2/§6.3** both-sides value re-run inside `propose_trade`.
+- **D4.5** trade before drop: a drop with ROS VOR ≥ `season.trade_instead_of_drop_min_vor`
+  holds any add under `season.urgent_add_weekly_gain`, in `waivers.build`.
+- **D8** every action carries `reason · short_term · long_term · alternative ·
+  evidence · would_be_wrong_if`, or `agent/run.py` rejects the whole reply.
+- **D1.4** the morning dossiers' multipliers (±25% week, ±15% ROS, two hosts for a
+  big move) land in `value_pool` via `core/manager/research.py`. The agent reads
+  the facts; it does not re-derive the number.
 
-**LINEUP** — the optimal assignment, the §4.2 variance mode, and the moves.
-- `playing for floor` means we are favoured by 12+; `ceiling` means we are
-  behind by 12+. Neither means leaving points on the bench: playoff seeding here
-  is TOTAL_POINTS_SCORED, so points-for always counts.
-- `— EMPTY —` in any slot is more urgent than any swap.
-
-**WAIVERS** — remember this league is **rolling priority, not FAAB**.
-- `FREE ADD` costs nothing at all (§5.3.2) — those clear a low bar on purpose.
-- `CLAIM` spends our queue position. The bar scales with how good that position
-  is (§5.3.1).
-- The `skip` lines are decisions too. "No net starting-lineup gain" usually
-  means the pickup would never actually start.
-
-## The switch
+## Run by hand
 
 ```
-cat ENABLED           # on / off
-echo on  > ENABLED    # allow writes
-echo off > ENABLED    # read-and-report only
+python scripts/research_week.py --roster        # cheap: our 13 only
+python scripts/manage.py --dry-run --no-agent   # core's plan, no model, no writes
+python scripts/manage.py --dry-run              # + the agent, no writes
+python scripts/manage.py                        # live, respects ENABLED
+python scripts/manage.py --tuesday              # the §7 review
 ```
-A failed health check flips it off by itself and posts to #fantasy. **Nothing in
-`core` ever turns it back on** — that is a human decision.
 
-## When something looks wrong
+Start with `--dry-run --no-agent`. If core's plan looks wrong, the agent cannot
+fix it and the bug is in `core`.
+
+## Reading what it did
 
 ```
-python scripts/healthcheck.py        # is ESPN still answering as us?
-tail -50 data/decisions.jsonl        # every action WITH the number that justified it
-ls -lt data/screenshots | head       # every write leaves a screenshot
+tail -f data/manager.log             # every cron run
+tail -50 data/decisions.jsonl        # every action WITH the number behind it
+cat data/lessons.md                  # the memory
 ls -lt data/agent-runs | head        # full transcripts
+ls -lt data/screenshots | head       # every write leaves a screenshot
+ls data/research-week/               # this morning's dossiers
 ```
 
-**"Log in Required" in a screenshot** means the saved web session has expired.
-The API cookies are not enough for the web UI. Fix:
-```
-python scripts/login.py
-python scripts/login.py --verify
-scp data/espn-session.json ironman@192.168.4.43:~/Fantasy-Manager/data/
-```
+## Not yet proven
 
-## Cadence
-
-| When | What |
-|---|---|
-| Daily 07:30 CT | full sweep — lineup, waivers, trades |
-| Sunday 11:00 CT | lineup only, catching late news |
-| After each Sunday window | late swap (§4.4) |
-| Tuesday | the review (§7) — writes a dated history file |
+`propose_trade`, `accept_trade`, `reject_trade` and `set_lineup` are written
+fail-closed behind the gate and have not moved a live ESPN page yet (trades by
+Pearce's instruction). The first live write of each is a supervised run: watch
+#fantasy and the screenshot.

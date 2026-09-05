@@ -82,6 +82,42 @@ def record_rejection(by_team: int, give: list[int], get: list[int]) -> None:
     )
 
 
+# ── roster adds (§5.7 — three a week, Pearce 2026-09-05) ─────────────────────
+
+
+def adds_this_week() -> int:
+    return len(_recent(store.load().get("roster_adds") or [], 7))
+
+
+def adds_left() -> int:
+    cap = int(priors().get("season.max_adds_per_week"))
+    return max(0, cap - adds_this_week())
+
+
+def can_add() -> tuple[bool, str]:
+    """A waiver claim or a free-agent add both spend one of the week's three.
+    The cap exists so the sweep has to choose, not so it can churn."""
+    cap = int(priors().get("season.max_adds_per_week"))
+    used = adds_this_week()
+    if used >= cap:
+        return False, f"§5.7 already made {used} of {cap} roster adds this week"
+    return True, f"§5.7 add {used + 1} of {cap} this week"
+
+
+def record_add(add_id: int, drop_id: int | None) -> None:
+    store.append("roster_adds",
+                 {"at": store.now_iso(), "add": add_id, "drop": drop_id})
+
+
+def proposals_left() -> tuple[int, int]:
+    """(left today, left this week) under §6.1."""
+    p = priors()
+    props = store.load().get("trade_proposals") or []
+    day = int(p.get("trades.max_proposals_per_day")) - len(_recent(props, 1))
+    week = int(p.get("trades.max_proposals_per_week")) - len(_recent(props, 7))
+    return max(0, day), max(0, week)
+
+
 # ── incoming acceptances (§6.8.9, §6.8.10) ───────────────────────────────────
 
 

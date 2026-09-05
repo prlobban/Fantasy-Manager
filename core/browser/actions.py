@@ -316,6 +316,58 @@ def _trade_button(page, player_names: list[str], *candidates: str, what: str):
     raise ActionFailed(f"offer card for {player_names} has no {what}")
 
 
+def propose_trade(s: EspnSession, league_id: int, season: int, to_team_id: int,
+                  give: list[tuple[int, str]], get: list[tuple[int, str]]) -> Receipt:
+    """§6.1–§6.7 — send an outgoing offer. Reached ONLY through write_gate,
+    which has already checked the rate limits and the both-sides value test.
+
+    STATUS 2026-09-05: written fail-closed and UNVERIFIED, by instruction
+    ("do not test whether it can trade"). ESPN's flow, from the team page of
+    the other manager: Propose Trade → tick players on both sides → Review →
+    Send. Every selector below is a candidate; the first one that fails raises
+    and nothing is sent.
+    """
+    import re
+
+    page = s.goto(
+        f"/football/team?leagueId={league_id}&teamId={to_team_id}&seasonId={season}"
+    )
+    s.dismiss_overlays()
+
+    start = _need(page, S.TRADE_PROPOSE_BUTTON, what="the Propose Trade button")
+    start.first.click()
+    page.wait_for_timeout(1500)
+
+    def _tick(espn_id: int, name: str) -> None:
+        row = _row_for_player(page, espn_id)
+        if row is None:
+            row = page.locator(S.ANY_ROW).filter(has_text=re.compile(re.escape(name), re.I))
+            if row.count() == 0:
+                raise ActionFailed(f"no trade row for {name!r} ({espn_id}) — nothing sent")
+            row = row.first
+        box = row.locator(S.TRADE_PLAYER_CHECKBOX)
+        if box.count() == 0:
+            raise ActionFailed(f"no checkbox on the trade row for {name!r} — nothing sent")
+        box.first.click()
+        page.wait_for_timeout(300)
+
+    for pid, name in give:
+        _tick(pid, name)
+    for pid, name in get:
+        _tick(pid, name)
+
+    review = _need(page, S.TRADE_REVIEW_BUTTON, what="the Review Trade button")
+    review.first.click()
+    page.wait_for_timeout(1200)
+    send = _need(page, S.TRADE_SEND_BUTTON, what="the Send Trade button")
+    send.first.click()
+    page.wait_for_timeout(1500)
+
+    detail = (f"to team {to_team_id}: give {', '.join(n for _, n in give)} / "
+              f"get {', '.join(n for _, n in get)}")
+    return _receipt(s, "propose trade", detail, verified=False)
+
+
 def accept_trade(s: EspnSession, league_id: int, season: int, offer_id: str,
                  player_names: list[str]) -> Receipt:
     """§6.8 — reached ONLY after a clean gauntlet sweep and the cool-down."""

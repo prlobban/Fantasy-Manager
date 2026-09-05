@@ -106,10 +106,15 @@ def check(action: Action, *, skip_health: bool = False) -> GateResult:
         if not ok:
             return GateResult(allowed=False, refused_by="§6.8.10", reason=why)
 
-    elif kind is ActionKind.WAIVER_CLAIM:
+    elif kind in (ActionKind.WAIVER_CLAIM, ActionKind.ADD_DROP):
         if args.get("drop") is None and args.get("roster_has_room") is False:
             return GateResult(allowed=False, refused_by="§5.4",
                               reason="no roster room and no drop specified")
+        # §5.7 — three adds a week, claims and free agents alike. The cap is
+        # what forces the sweep to choose rather than churn.
+        ok, why = rate_limits.can_add()
+        if not ok:
+            return GateResult(allowed=False, refused_by="§5.7", reason=why)
 
     return GateResult(allowed=True)
 

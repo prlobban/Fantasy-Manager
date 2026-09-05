@@ -200,3 +200,32 @@ trades:
     # §6.8.10 — caps.
     max_accepts_per_week: 1
     same_manager_cooldown_days: 14
+
+# ── in-season additions, 2026-09-05 (Pearce's post-draft brief) ──────────────
+season:
+  # §5.7 — roster adds (waiver claims + free-agent adds) per rolling 7 days.
+  # Pearce, 09-05: "three a week max, so it is forced to actually think."
+  max_adds_per_week: 3
+
+  # D4.5 — a droppable player with at least this much ROS VOR is trade
+  # capital, not a drop. The sweep must try a trade first unless the add is
+  # urgent.
+  trade_instead_of_drop_min_vor: 5.0
+  # ...unless the add gains at least this many starting points a week; then
+  # the drop is justified outright.
+  urgent_add_weekly_gain: 4.0
+
+  # The weekly research multiplier (D1.4) may move THIS WEEK's projection this
+  # far. Wider than the ROS cap because a practice report or a snap-share jump
+  # is a bigger, shorter-lived signal than a role change.
+  week_override_cap: 0.25
+
+research_week:
+  # Who gets a dossier every morning: everyone rostered, plus the top waiver
+  # candidates by weekly gain and the trade targets core surfaced.
+  waiver_candidates: 10
+  trade_targets: 6
+  # A weekly dossier older than this is ignored. A practice report is a
+  # same-day fact.
+  max_age_hours: 20
+  workers: 6

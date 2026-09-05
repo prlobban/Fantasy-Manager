@@ -32,7 +32,15 @@ PROMPTS = REPO_ROOT / "agent" / "prompts"
 SCHEMAS = REPO_ROOT / "agent" / "schemas"
 MCP_CONFIG = REPO_ROOT / "agent" / "mcp.json"
 PLAYBOOK = REPO_ROOT / "docs" / "fantasy-playbook.md"
+DOCTRINE = REPO_ROOT / "docs" / "fantasy-doctrine.md"
 PRIORS = REPO_ROOT / "priors.yaml"
+
+#: D8 — the six-part reasoning every manager action must carry. Checked here,
+#: in code, so "his projection is higher" cannot become a write.
+REASONING_FIELDS = ("reason", "short_term", "long_term", "alternative",
+                    "evidence", "would_be_wrong_if")
+_MIN_REASON_CHARS = {"reason": 40, "short_term": 20, "long_term": 20,
+                     "alternative": 20, "evidence": 20, "would_be_wrong_if": 15}
 
 
 @dataclass(frozen=True)
@@ -86,6 +94,13 @@ TASKS: dict[str, TaskSpec] = {
         "dossier.md", "dossier.json", "WebSearch", False, False,
         max_turns=8, model="research"),
 
+    # D1 / D3.1 — the in-season morning research. Same shape as the pre-draft
+    # dossier: the web and nothing else, no doctrine, three searches + the
+    # answer. max_turns = searches + 2, measured on the draft pass.
+    "weekly_dossier": TaskSpec(
+        "weekly_dossier.md", "weekly_dossier.json", "WebSearch", False, False,
+        max_turns=7, model="research"),
+
     # §3.10 — judgment between our turns. Reads a packet, returns JSON. It gets
     # the doctrine (it cites sections) and no tools whatsoever.
     #
@@ -137,6 +152,8 @@ def build_system_prompt(task: str) -> str:
             (PROMPTS / "system.md").read_text(encoding="utf-8"),
             "\n# THE PLAYBOOK (authoritative — cite these sections)\n\n",
             PLAYBOOK.read_text(encoding="utf-8"),
+            "\n\n# THE DOCTRINE (the craft — cite D-sections)\n\n",
+            DOCTRINE.read_text(encoding="utf-8") if DOCTRINE.exists() else "",
             "\n\n# CURRENT THRESHOLDS (priors.yaml)\n\n```yaml\n",
             PRIORS.read_text(encoding="utf-8"),
             "\n```\n\n# THIS RUN\n\n",
@@ -172,13 +189,39 @@ def _validate(payload: dict, task: str) -> list[str]:
             return ["missing 'actions'"]
         if not actions and not payload.get("no_action_reason"):
             problems.append("empty actions with no no_action_reason")
-        allowed = {"set_lineup", "add_drop", "reject_trade", "accept_trade", "notify"}
+        allowed = {"set_lineup", "add_drop", "propose_trade", "reject_trade",
+                   "accept_trade", "notify"}
         for i, a in enumerate(actions):
             if a.get("tool") not in allowed:
                 problems.append(f"action {i}: unknown tool {a.get('tool')!r}")
             if not a.get("cites"):
                 # §8.2a — an uncited action is rejected, not fixed up.
                 problems.append(f"action {i}: no § citation")
+            # D8 — the reasoning contract. A notify is exempt: it is a message,
+            # not a move.
+            if a.get("tool") != "notify":
+                for f in REASONING_FIELDS:
+                    v = a.get(f)
+                    if not isinstance(v, str) or len(v.strip()) < _MIN_REASON_CHARS[f]:
+                        problems.append(f"action {i}: D8 field {f!r} missing or too thin")
+        if task == "daily" and not (payload.get("roster_assessment") or "").strip():
+            problems.append("no roster_assessment — the sweep must evaluate the roster every run")
+
+    if task == "tuesday":
+        for k in ("result", "efficiency_read", "decision_grades", "lessons"):
+            if k not in payload:
+                problems.append(f"missing {k!r}")
+        for i, ln in enumerate(payload.get("lessons") or []):
+            if not isinstance(ln, str) or len(ln.strip()) < 25:
+                problems.append(f"lesson {i}: too thin to be a lesson (D7.3)")
+
+    if task == "weekly_dossier":
+        if not payload.get("espn_id"):
+            problems.append("no espn_id")
+        for k, lo, hi in (("week_multiplier", 0.75, 1.25), ("ros_multiplier", 0.85, 1.15)):
+            m = payload.get(k)
+            if not isinstance(m, int | float) or not (lo <= m <= hi):
+                problems.append(f"{k} {m} outside the allowed band")
 
     if task == "dossier":
         # Only the rules a JSON Schema cannot state. The URL/confidence rules

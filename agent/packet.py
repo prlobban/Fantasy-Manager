@@ -66,6 +66,28 @@ def dossier_packet(player, val, *, adp: float | None = None) -> dict[str, Any]:
     }
 
 
+def weekly_dossier_packet(player, val, *, week: int, role: str) -> dict[str, Any]:
+    """D1 / D3.1 — one player, one morning, for one research agent.
+
+    `role` tells the researcher why we care (roster / waiver / trade) so the
+    analyst read is aimed at the right question — start-sit for a starter,
+    role and volume for a waiver target.
+    """
+    row = _player_row(player, val)
+    return {
+        "task": "weekly_dossier",
+        "as_of": datetime.now(UTC).date().isoformat(),
+        "nfl_week": week,
+        "why_we_care": role,
+        "player": row,
+        "what_the_model_believes": (
+            f"ESPN projects {row['proj']} points this week; the engine values him at "
+            f"{row['vor']} over replacement for the week, tier {row['tier']}, status "
+            f"{row['status']}."
+        ),
+    }
+
+
 def judge_packet(plan, room, *, for_overall: int, budget_s: float,
                  dossiers: dict, board_by_id: dict, recent_picks: list) -> dict[str, Any]:
     """§3.10 — one pick's worth of context for the judge.
@@ -148,17 +170,33 @@ def build(task: str, state: ls_mod.LeagueState | None = None,
           *, scope: str = "all") -> dict[str, Any]:
     """`scope` narrows a daily run: "lineup" (the Sunday pass) omits the
     waiver plan and tells the agent to leave waivers and trades alone."""
+    from core.gates import rate_limits
+    from core.manager import research as R
+    from core.manager import roster as roster_mod
+    from core.state import lessons
+
     st = state or ls_mod.snapshot()
-    window = "week"
+    weeks_left = max(1, st.facts.settings.regular_season_weeks - st.week + 1)
+
+    # This morning's research, folded into BOTH windows in code (D1.4): the
+    # weekly multiplier is a named §2.7 term, the ROS one is the bounded
+    # override. The agent then reads the facts, not just the number.
+    dossiers = R.load_all(week=st.week)
     vals = value_pool(
-        st.all_players(),
-        st.facts.settings,
-        window=window,
-        week=st.week if window == "week" else None,
-        weeks_remaining=max(1, st.facts.settings.regular_season_weeks - st.week + 1),
+        st.all_players(), st.facts.settings, window="week", week=st.week,
+        weeks_remaining=weeks_left, current_week=st.week,
+        contexts=R.contexts(dossiers, window="week"),
+    )
+    ros_vals = value_pool(
+        st.all_players(), st.facts.settings, window="ros",
+        weeks_remaining=weeks_left, current_week=st.week,
+        contexts=R.contexts(dossiers, window="ros"),
+        override_cap=float(priors().get("model.override_cap")),
     )
 
     me = st.me
+    shape = roster_mod.analyse(me.roster, ros_vals, st.facts.settings)
+    day_left, week_left = rate_limits.proposals_left()
     packet: dict[str, Any] = {
         "task": task,
         "scope": scope,
@@ -188,19 +226,46 @@ def build(task: str, state: ls_mod.LeagueState | None = None,
             "waiver_priority": me.waiver_priority,
             "bench_open": st.bench_open,
             "roster": [
-                {**_player_row(p, vals.get(p.espn_id)), "slot": me.slots.get(p.espn_id)}
+                {**_player_row(p, vals.get(p.espn_id)),
+                 "slot": me.slots.get(p.espn_id),
+                 "ros_proj": round(ros_vals[p.espn_id].points, 1) if p.espn_id in ros_vals else None,
+                 "ros_vor": round(ros_vals[p.espn_id].vor, 1) if p.espn_id in ros_vals else None}
                 for p in me.roster
             ],
         },
+        "roster_shape": {
+            "summary": shape.summary(),
+            "by_position": {
+                pos.value: {"have": s.have, "starters": s.starters, "cover": s.cover,
+                            "delta": s.delta, "verdict": s.verdict,
+                            "surplus_players": [p.name for p in s.surplus_players]}
+                for pos, s in shape.by_pos.items()
+            },
+            "notes": shape.notes,
+        },
+        "research": {
+            "dossiers": R.facts(dossiers),
+            "coverage": f"{sum(1 for p in me.roster if p.espn_id in dossiers)}/{len(me.roster)} "
+                        f"of our roster researched this morning; "
+                        f"{len(dossiers)} dossiers total",
+            "note": "multipliers already applied to the valuations above (D1.4); read the facts",
+        },
+        "lessons": lessons.read(),
         "guardrails": {
             "kill_switch": kill_switch.state(),
             "writes_allowed": [
-                "set_lineup", "add_drop", "reject_trade", "notify",
+                "set_lineup", "add_drop", "propose_trade", "accept_trade (13/13 gauntlet only)",
+                "reject_trade", "notify",
             ],
             "never": ["counter-offer", "league settings", "chat", "other teams"],
-            "note": "an action without a § citation is rejected before it executes",
+            "note": ("an action without a § citation or the six D8 reasoning fields "
+                     "is rejected before it executes"),
         },
         "rate_limits": {
+            "adds_left_this_week": rate_limits.adds_left(),
+            "proposals_left_today": day_left,
+            "proposals_left_this_week": week_left,
+            "recent_adds": (store.load().get("roster_adds") or [])[-3:],
             "recent_proposals": (store.load().get("trade_proposals") or [])[-3:],
             "recent_accepts": (store.load().get("trade_accepts") or [])[-3:],
         },
@@ -260,30 +325,54 @@ def build(task: str, state: ls_mod.LeagueState | None = None,
             on_waivers=st.on_waivers,
             bench_open=st.bench_open,
             current_week=st.week,
+            adds_left=rate_limits.adds_left(),
+            ros_valuations=ros_vals,
         )
+
+        def _cand(c):
+            return {"name": c.player.name, "espn_id": c.player.espn_id,
+                    "pos": c.player.pos.value, "gain_per_week": round(c.net_gain, 2),
+                    "replaces": c.replaces.name if c.replaces else None,
+                    "drop": c.drop.name if c.drop else None,
+                    "drop_id": c.drop.espn_id if c.drop else None,
+                    "drop_tradeable": c.drop_tradeable,
+                    "archetype": c.archetype, "why": c.reasons}
+
         packet["waiver_plan"] = {
             "priority": wplan.priority,
-            "free_adds": [
-                {"name": c.player.name, "espn_id": c.player.espn_id,
-                 "pos": c.player.pos.value, "gain_per_week": round(c.net_gain, 2),
-                 "drop": c.drop.name if c.drop else None,
-                 "drop_id": c.drop.espn_id if c.drop else None,
-                 "archetype": c.archetype, "why": c.reasons}
-                for c in wplan.free_adds
-            ],
-            "claims": [
-                {"name": c.player.name, "espn_id": c.player.espn_id,
-                 "pos": c.player.pos.value, "gain_per_week": round(c.net_gain, 2),
-                 "drop": c.drop.name if c.drop else None,
-                 "drop_id": c.drop.espn_id if c.drop else None,
-                 "archetype": c.archetype, "why": c.reasons}
-                for c in wplan.claims
-            ],
+            "adds_left_this_week": wplan.adds_left,
+            "free_adds": [_cand(c) for c in wplan.free_adds],
+            "claims": [_cand(c) for c in wplan.claims],
             # The skips are decisions too, and often the right one.
             "skipped": [{"name": c.player.name, "why": why}
                         for c, why in wplan.skipped[:10]],
             "notes": wplan.notes,
         }
+
+    if task in ("daily", "tuesday") and scope in ("all", "trades"):
+        from core.manager import trades_out as T
+
+        others = {tid: (t.name, t.roster) for tid, t in st.teams.items()
+                  if tid != st.my_team_id}
+        props = T.build(me.roster, others, ros_vals, st.facts.settings)
+        packet["trade_ideas"] = {
+            "proposals_left_today": day_left,
+            "proposals_left_this_week": week_left,
+            "ideas": [{
+                "to_team": p.to_team, "to_team_name": p.to_team_name,
+                "give": [{"espn_id": x.espn_id, "name": x.name, "pos": x.pos.value} for x in p.give],
+                "get": [{"espn_id": x.espn_id, "name": x.name, "pos": x.pos.value} for x in p.get],
+                "our_gain": p.our_gain, "their_gain": p.their_gain,
+                "fairness": p.fairness, "shape_effect": p.shape_effect,
+                "rationale": p.rationale, "warnings": p.warnings,
+            } for p in props],
+        }
+
+    if task == "tuesday":
+        from core.espn.client import client
+        from core.manager import tuesday as tue
+
+        packet["review"] = tue.build_section(client(), st, ros_vals)
 
     return packet
 

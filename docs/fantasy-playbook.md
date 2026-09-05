@@ -23,8 +23,12 @@ projections, VOR, tiers, durability, ADP. Everything expensive happens here. →
 **§1.2 Draft (live).** After *every* pick by *anyone*: remove the player, recompute survival odds,
 re-rank, rewrite the queue. On our turn: pick. → `§3`
 
-**§1.3 Daily (in-season, box, morning).** Roster sweep → injury/news deltas → optimal lineup →
-waiver scan → trade scan. Write actions per `§8.2`. Log everything per `§7.1`.
+**§1.3 Daily (in-season, box, morning).** **Research first** (07:00): one sourced dossier per
+rostered player, waiver candidate and trade target — status and practice report, usage trend,
+matchup, analyst read, news — validated in code and folded into the valuation as a bounded
+multiplier (doctrine D1.4). Then the sweep (07:30): roster assessment → optimal lineup → waiver
+scan → trade scan → incoming offers. Write actions per `§8.2`, each with the six-part reasoning of
+doctrine D8. Log everything per `§7.1`. *(Revised 2026-09-05.)*
 
 **§1.4 Tuesday (in-season, replaces §1.3's tail).** Grade the week: did we win, what did the bench
 score, which calls were right, which priors were wrong. Scan the whole league. Write a dated
@@ -328,6 +332,14 @@ that is a real decision rather than an automatic hold); or the handcuff to our o
 **§5.6 Daily scan, daily action.** The sweep runs daily per `§1.3`. This league processes waivers
 every day but Tuesday, so a claim rarely waits for a weekly run. Free-agent adds fire any day.
 
+**§5.7 Three roster adds a week — hard, in code.** *(Pearce, 2026-09-05.)* A waiver claim and a
+free-agent add both spend one of `[v1 prior: 3]` per rolling seven days; the fourth is refused by
+`write_gate`. The cap exists so the sweep has to choose rather than churn: with only three, an add
+must change the starting lineup (`§5.2`) or fix the roster's shape (doctrine D5). **Trade before
+you drop** (doctrine D4.5): a drop candidate carrying real ROS value is a trade chip, and a marginal
+add that would cut him is held until a trade has been tried or the add clears the urgent bar
+(`season.urgent_add_weekly_gain`).
+
 ---
 
 ## §6 — Trades
@@ -468,12 +480,15 @@ operating log's watch items. History files accrete and are never edited.
 
 ## §8 — Guardrails
 
-**§8.1 Lanes.** The agent owns: the draft, the lineup, waivers/free agents, and — only on a clean
-sweep of the `§6.8` gauntlet — accepting an incoming trade. **Pearce owns:** league settings,
-anything said to another manager in words, sending an outgoing proposal (the agent surfaces the
-idea; the proposal itself is not a write `core` exposes in v1), and the kill switch.
+**§8.1 Lanes.** The agent owns: the draft, the lineup, waivers/free agents, **sending an outgoing
+proposal inside `§6.1`–`§6.7`**, and — only on a clean sweep of the `§6.8` gauntlet — accepting an
+incoming trade. **Pearce owns:** league settings, anything said to another manager in words, prior
+changes, and the kill switch.
 *(Corrected 2026-09-04: an earlier line here gave incoming accepts to Pearce, contradicting the
 `§8.2` table and the decision made 2026-09-03 — trades are authorised, gated by `§6.8`.)*
+*(Revised 2026-09-05: outgoing proposals are now a `core` write, `propose_trade`, per the original
+spec's "max 3 trade proposals a week" — rate-limited in code and the both-sides value test re-run
+before anything is sent. Not yet exercised against ESPN, by Pearce's instruction.)*
 
 **§8.2 The write lane.** Reads are unlimited and unattended. Writes are exactly these — nothing
 else may be written:
@@ -482,8 +497,8 @@ else may be written:
 |---|---|
 | Draft queue + draft pick | **auto** (draft day only) |
 | Lineup / start-sit | **auto** — reversible until kickoff |
-| Waiver claim / free-agent add-drop, inside `§5` | **auto** |
-| Outgoing trade proposal, inside `§6.1`–`§6.7` | **auto**, rate-limited — *not exposed in v1: `get_trade_ideas` surfaces them, Pearce sends* |
+| Waiver claim / free-agent add-drop, inside `§5` | **auto** — max 3 a week (`§5.7`) |
+| Outgoing trade proposal, inside `§6.1`–`§6.7` | **auto**, rate-limited (1/day, 3/week), `§6.2`/`§6.3` re-checked in code |
 | Accepting an incoming trade | **auto** — *only* on a clean sweep of the `§6.8` gauntlet, with immediate notification |
 | Countering an incoming trade | 🔴 **NEVER** — a counter is a new outgoing proposal (`§6.8.13`) |
 | League settings · chat/messages · anything outside our own team | 🔴 **NEVER** |
