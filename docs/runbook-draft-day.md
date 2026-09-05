@@ -60,7 +60,7 @@ before the lock** — don't try to override that.
 scripts/draft_day.sh start
 ```
 
-Arms the kill switch (`ENABLED=on`), launches the draft loop and the judge
+Arms the kill switch (`ENABLED=on`), launches the draft loop (`--judge live`) and the judge
 detached so a dropped SSH doesn't kill them, and prints the tail command.
 
 - **The loop** (`draft.py --judge shadow`) passes pre-flight, then waits for
@@ -70,9 +70,9 @@ detached so a dropped SSH doesn't kill them, and prints the tail command.
   on our turn, click Draft on #1 after ESPN's 3 s inert countdown.
   **Queue before click, always**: if the click leg ever dies, ESPN autopicks
   from the top of *our* queue, never from its own list.
-- **The judge** (`draft_judge.py --shadow`) is the model. In shadow it posts
-  what it would have vetoed or reordered to #fantasy and **changes nothing**.
-  The maths drafts. If it's quiet, the dossiers agree with the board.
+- **The judge** (`draft_judge.py`) is the model, **live**: it can veto a candidate or
+  reorder two players within a tier, nothing else, hard-capped in code. If it is late,
+  silent or refused, the maths drafts. Quiet means the dossiers agree with the board.
 
 ## 11:00 — watch
 
