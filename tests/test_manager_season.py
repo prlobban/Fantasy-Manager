@@ -132,6 +132,14 @@ def test_an_urgent_add_overrides_trade_before_drop():
     assert plan.free_adds and plan.free_adds[0].player.espn_id == 60
 
 
+def test_a_defence_is_always_a_streamer_however_big_the_week():
+    """First live sweep: a D/ST at +3.3 was classed an immediate starter and
+    offered priority 2. D6.1 says K and D/ST are streamed, full stop."""
+    d = pl(70, Pos.DST, 9.0)
+    v = _vals([d])
+    assert waivers.classify(d, v[70], 3.3, None) == "streamer"
+
+
 # ── the weekly cap (§5.7) ────────────────────────────────────────────────────
 
 

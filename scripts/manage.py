@@ -1,9 +1,9 @@
 #!/usr/bin/env python
 """The season manager (§1.3, §1.4). Runs on the box from scripts/cron_manage.sh.
 
-    python scripts/manage.py --dry-run --no-agent   # core's plans only
-    python scripts/manage.py --dry-run              # + the agent, no writes
-    python scripts/manage.py                        # the daily sweep
+    python scripts/manage.py --no-agent             # core's plans only, no model
+    python scripts/manage.py                        # the sweep; ENABLED=off = agent runs, writes refused
+    python scripts/manage.py --dry-run              # + never flip the switch on a health failure
     python scripts/manage.py --tuesday              # the weekly review (§7)
     python scripts/manage.py --task lineup          # one slice only
 

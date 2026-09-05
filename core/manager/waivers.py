@@ -84,11 +84,17 @@ def classify(c_player: Player, val: Valuation, weekly_gain: float,
     """§5.3.1 archetypes. Used for the log and for §5.3.3."""
     if our_rb1 is not None and c_player.pos is Pos.RB and c_player.pro_team == our_rb1.pro_team:
         return "own_rb1_handcuff"
+    # D6.1 — a kicker or defence is a streamer whatever this week's number
+    # says. The first live sweep (2026-09-05) scored a D/ST +3.3 as an
+    # "immediate starter" and offered priority 2 for it; the agent refused it
+    # on doctrine. The code should not have asked.
+    if c_player.pos in (Pos.K, Pos.DST):
+        return "streamer"
     if weekly_gain >= 3.0:
         return "immediate_starter"
     if weekly_gain >= 1.5:
         return "weekly_flex_upgrade"
-    if c_player.pos in (Pos.K, Pos.DST) or val.points < 8:
+    if val.points < 8:
         return "streamer"
     return "upside_stash"
 
