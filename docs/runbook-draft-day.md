@@ -63,7 +63,7 @@ scripts/draft_day.sh start
 Arms the kill switch (`ENABLED=on`), launches the draft loop (`--judge live`) and the judge
 detached so a dropped SSH doesn't kill them, and prints the tail command.
 
-- **The loop** (`draft.py --judge shadow`) passes pre-flight, then waits for
+- **The loop** (`draft.py --judge live`) passes pre-flight, then waits for
   ESPN to open the room, retrying every 30 s, and posts to #fantasy when it's
   in. From then on, every ~2 s: read every pick in the room (API first, DOM as
   fallback) → re-rank the board, pure maths → rewrite our ESPN queue, top 8 →

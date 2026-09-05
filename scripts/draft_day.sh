@@ -6,8 +6,9 @@
 #   scripts/draft_day.sh status   kill switch + which processes are up
 #   scripts/draft_day.sh stop     disarm, kill both, kill the headless browser
 #
-# The loop runs with the judge in SHADOW: verdicts are posted to Slack and
-# change nothing. The maths drafts. (docs/runbook-draft-day.md)
+# The judge is LIVE (Pearce, 2026-09-05 10:25): veto and within-tier reorder
+# only, hard-capped in core/draft/verdict.py. The maths still drafts if it is
+# late, silent, or refused. (docs/runbook-draft-day.md)
 set -u
 cd "$(dirname "$0")/.." || exit 1
 PY=./.venv/bin/python
@@ -18,11 +19,11 @@ case "${1:-}" in
       echo "a draft loop is already running — 'stop' first"; exit 1
     fi
     echo on > ENABLED
-    setsid nohup $PY scripts/draft.py --judge shadow \
+    setsid nohup $PY scripts/draft.py --judge live \
       > data/draft-live.log 2>&1 < /dev/null &
     echo "loop  pid $!"
     sleep 20
-    setsid nohup $PY scripts/draft_judge.py --shadow \
+    setsid nohup $PY scripts/draft_judge.py \
       > data/judge-live.log 2>&1 < /dev/null &
     echo "judge pid $!"
     echo "armed. watch with:  tail -f data/draft-live.log"
