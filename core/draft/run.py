@@ -333,8 +333,13 @@ def run(cfg: DraftConfig | None = None) -> DraftStats:
                         current=qsync.last_current_size, ops=ops,
                         landed=ok, aborted=aborted,
                     )
-                    if ops and ok < len(ops):
-                        log.warning("queue sync: only %d/%d ops landed", ok, len(ops))
+                    # Report against what was ATTEMPTED. Ops the budget or an
+                    # abort never reached are deferred, not failed, and calling
+                    # them failures made a healthy sync look broken.
+                    tried = getattr(qsync, "last_tried", len(ops))
+                    if tried and ok < tried:
+                        log.warning("queue sync: %d/%d attempted ops landed "
+                                    "(%d deferred)", ok, tried, len(ops) - tried)
 
                 # ── our turn ─────────────────────────────────────────────────
                 if our_turn and last_plan and last_plan.best:

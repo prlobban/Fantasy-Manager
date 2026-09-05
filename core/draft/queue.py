@@ -105,8 +105,23 @@ class QueueSync:
             key=lambda np: -len(np[0]),
         )
         self._add_attempts: dict[int, int] = {}
+        #: Players the DOM has told us are DRAFTED. Permanent, and deliberately
+        #: NOT cleared by reset_attempts().
+        #:
+        #: Being drafted is not a transient failure — it is the one queue fact
+        #: that can never reverse. Before this set existed, `reset_attempts()`
+        #: fired on every opposing pick and wiped the memory, so the loop
+        #: re-searched the same dead players every cycle. Measured in the
+        #: 2026-09-04 practice draft: **34 "already DRAFTED" discoveries**, each
+        #: costing a full search (~1.5-2 s) before the button could even be
+        #: read. That was the whole reason the queue sat at 0.
+        self._drafted: set[int] = set()
         self._last_good: list[int] = []
         self.last_current_size = 0
+        #: Ops actually attempted by the last apply(). An op the budget or an
+        #: abort never reached is not a failure, and reporting it as one made
+        #: every practice log read like the queue was broken.
+        self.last_tried = 0
 
     def ensure_autopick_off(self) -> bool:
         """Switch ESPN's Autopick toggle OFF if it is on. Returns True if it
@@ -138,7 +153,11 @@ class QueueSync:
             return False
 
     def reset_attempts(self) -> None:
-        """The room moved on (a new pick landed): earlier failures are stale."""
+        """The room moved on (a new pick landed): earlier failures are stale.
+
+        `_drafted` is NOT cleared — a click that failed is worth retrying, a
+        player who is gone is not.
+        """
         self._add_attempts.clear()
 
     # ── read ─────────────────────────────────────────────────────────────────
@@ -210,6 +229,7 @@ class QueueSync:
         import time
 
         ok = 0
+        tried = 0
         start = time.monotonic()
         for i, op in enumerate(ops):
             if budget_s is not None and time.monotonic() - start > budget_s:
@@ -219,6 +239,7 @@ class QueueSync:
             if abort is not None and abort():
                 log.info("queue sync: aborted after %d/%d ops — we are on the clock", i, len(ops))
                 break
+            tried += 1
             try:
                 if op.kind == "remove":
                     done = self._remove(op.espn_id)
@@ -227,13 +248,17 @@ class QueueSync:
                 ok += int(done)
             except Exception as e:
                 log.warning("queue op %s %s failed: %s", op.kind, op.espn_id, e)
-        return ok, len(ops)
+        self.last_tried = tried
+        return ok, tried
 
     def _add(self, espn_id: int) -> bool:
         from core.browser import selectors as S
 
         pl = self.by_id.get(espn_id)
         if pl is None:
+            return False
+        if espn_id in self._drafted:
+            # Free. The whole point of the set: no search, no click, no wait.
             return False
         attempts = self._add_attempts.get(espn_id, 0)
         if attempts >= self.MAX_ADD_ATTEMPTS:
@@ -261,6 +286,7 @@ class QueueSync:
                 labels = [t.strip() for t in row.locator("button").all_inner_texts()]
                 log.info("queue add: %r has no QUEUE button (%s)", name, labels or "none")
                 if any("DRAFTED" in lb.upper() for lb in labels):
+                    self._drafted.add(espn_id)
                     self._add_attempts[espn_id] = self.MAX_ADD_ATTEMPTS
                 return False
             # Verified 2026-09-04: a click that "succeeds" does not always add.
@@ -289,6 +315,7 @@ class QueueSync:
                 # He may have been drafted in the meantime: then stop trying.
                 labels = [t.strip().upper() for t in row.locator("button").all_inner_texts()]
                 if any("DRAFTED" in lb for lb in labels):
+                    self._drafted.add(espn_id)
                     self._add_attempts[espn_id] = self.MAX_ADD_ATTEMPTS
                     return False
             log.warning("queue add: %r clicked three ways, never appeared in the queue", name)
@@ -357,11 +384,20 @@ class QueueSync:
         #: it does not have to hit the DOM again while the clock is running.
         self.last_current_size = len(current)
 
-        ops = plan_ops(current, target)
+        # A player the DOM has already shown as DRAFTED can never be queued.
+        # Filtering here means no op is even planned for him, which is what
+        # stops the sync spending its budget proving the same thing twice.
+        wanted = [pid for pid in target if pid not in self._drafted]
+        dropped = len(target) - len(wanted)
+        if dropped:
+            log.info("queue sync: skipped %d already-drafted target(s)", dropped)
+
+        ops = plan_ops(current, wanted)
+        self.last_tried = 0
         if not ops:
             return [], 0
-        log.info("queue sync: %d ops (current=%d, target=%d)", len(ops), len(current), len(target))
+        log.info("queue sync: %d ops (current=%d, target=%d)", len(ops), len(current), len(wanted))
         if dry_run:
             return ops, 0
-        ok, _ = self.apply(ops, budget_s=budget_s, abort=abort)
+        ok, tried = self.apply(ops, budget_s=budget_s, abort=abort)
         return ops, ok
