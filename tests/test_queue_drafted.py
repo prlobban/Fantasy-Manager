@@ -34,6 +34,7 @@ def _sync(ids=(1, 2, 3)):
     q._last_good = []
     q._consecutive_fails = 0
     q._cooldown = 0
+    q._last_failure_was_click = False
     q.last_current_size = 0
     q.last_tried = 0
     return q
@@ -106,9 +107,16 @@ class _Op:
         self.espn_id = espn_id
 
 
-def _failing_sync(n_players=8, succeed=False):
+def _failing_sync(n_players=8, succeed=False, click_failure=True):
+    """`click_failure` distinguishes a page that refuses clicks from a page
+    that is simply telling us a player has no QUEUE button."""
     q = _sync(ids=range(1, n_players + 1))
-    q._add = lambda pid: succeed          # every add fails (or succeeds)
+
+    def _add(pid):
+        q._last_failure_was_click = (not succeed) and click_failure
+        return succeed
+
+    q._add = _add
     q._remove = lambda pid: True
     return q
 
@@ -160,5 +168,17 @@ def test_a_drafted_skip_is_not_evidence_the_page_is_broken():
     q._remove = lambda pid: True
     ok, tried = q.apply([_Op(i) for i in (1, 2, 3)])
     assert ok == 0
+    assert q._consecutive_fails == 0
+    assert q._cooldown == 0
+
+
+def test_a_missing_queue_button_does_not_trip_the_breaker():
+    """Practice run 3 tripped twice on a healthy page: late-draft rows render
+    no buttons at all, and the first breaker counted that as the page refusing
+    clicks. A page saying "no button here" is a page that is working."""
+    q = _failing_sync(click_failure=False)
+    ok, tried = q.apply([_Op(i) for i in range(1, 9)])
+    assert ok == 0
+    assert tried == 8                      # it worked through the whole list
     assert q._consecutive_fails == 0
     assert q._cooldown == 0

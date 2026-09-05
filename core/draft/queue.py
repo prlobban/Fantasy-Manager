@@ -137,6 +137,15 @@ class QueueSync:
         #: Consecutive add failures, and cycles left in the stand-down.
         self._consecutive_fails = 0
         self._cooldown = 0
+        #: Did the LAST add fail because the page would not take a click?
+        #:
+        #: Only that is evidence of an unhealthy page. A row with no QUEUE
+        #: button — a drafted player, or a late-draft row that renders no
+        #: buttons at all — is a perfectly healthy page telling us "no". The
+        #: first version of the breaker counted those and tripped twice in
+        #: practice run 3 on a page that was working fine, standing the queue
+        #: down for ten cycles for nothing.
+        self._last_failure_was_click = False
         self.last_current_size = 0
         #: Ops actually attempted by the last apply(). An op the budget or an
         #: abort never reached is not a failure, and reporting it as one made
@@ -265,9 +274,11 @@ class QueueSync:
                     done = self._remove(op.espn_id)
                 else:
                     done = self._add(op.espn_id)
-                    # Only a real add attempt tells us anything about the page.
-                    if op.espn_id not in self._drafted:
-                        self._consecutive_fails = 0 if done else self._consecutive_fails + 1
+                    # Only a refused CLICK is evidence about the page's health.
+                    if done:
+                        self._consecutive_fails = 0
+                    elif self._last_failure_was_click:
+                        self._consecutive_fails += 1
                 ok += int(done)
                 if self._consecutive_fails >= self.BREAKER_THRESHOLD:
                     self._cooldown = self.BREAKER_COOLDOWN
@@ -288,6 +299,7 @@ class QueueSync:
         pl = self.by_id.get(espn_id)
         if pl is None:
             return False
+        self._last_failure_was_click = False
         if espn_id in self._drafted:
             # Free. The whole point of the set: no search, no click, no wait.
             return False
@@ -303,6 +315,7 @@ class QueueSync:
         # Search applies on ENTER (verified), and it must be cleared after,
         # or the table stays filtered to one row for the rest of the draft.
         if not S.search_player(page, name, settle_ms=700):
+            self._last_failure_was_click = True
             return False
         try:
             row = S.player_row(page, name)
@@ -350,6 +363,7 @@ class QueueSync:
                     self._add_attempts[espn_id] = self.MAX_ADD_ATTEMPTS
                     return False
             log.warning("queue add: %r clicked three ways, never appeared in the queue", name)
+            self._last_failure_was_click = True
             return False
         finally:
             S.clear_search(page)
