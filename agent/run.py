@@ -212,7 +212,9 @@ def _validate(payload: dict, task: str) -> list[str]:
                         problems.append(f"action {i}: D8 field {f!r} missing or too thin")
             # D9 — an offer to a human carries the reason that human says yes.
             if a.get("tool") == "propose_trade":
-                w = a.get("why_they_accept")
+                # Accepted at the top level or inside args — the tool takes it
+                # as an argument, and the first live run put it there.
+                w = a.get("why_they_accept") or (a.get("args") or {}).get("why_they_accept")
                 if not isinstance(w, str) or len(w.strip()) < 30:
                     problems.append(f"action {i}: propose_trade needs why_they_accept (D9)")
         if task == "daily" and not (payload.get("roster_assessment") or "").strip():

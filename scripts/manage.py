@@ -184,8 +184,9 @@ def _write_reasoning(task: str, scope: str, packet: dict, out: dict,
             L.append(f"cites: {', '.join(a.get('cites') or [])}")
             for f in ("reason", "short_term", "long_term", "alternative", "evidence",
                       "would_be_wrong_if", "why_they_accept"):
-                if a.get(f):
-                    L.append(f"- **{f}:** {a[f]}")
+                v = a.get(f) or (a.get("args") or {}).get(f) if f == "why_they_accept" else a.get(f)
+                if v:
+                    L.append(f"- **{f}:** {v}")
             L.append("")
     if out.get("no_action_reason"):
         L += ["## No action", "", out["no_action_reason"], ""]

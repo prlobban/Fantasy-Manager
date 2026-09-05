@@ -80,6 +80,12 @@ is not an action (a session that looks expired, a roster that cannot field a
 lineup). Anything you want Pearce's read on goes in `escalate`, **two
 sentences and the ask**, and is posted separately.
 
+## The switch
+
+`guardrails.kill_switch` off means read-and-report: every write is refused
+at §8.4 and that refusal is the record. It is the expected state until Pearce
+turns it on. Do not escalate about it and do not ask for it to be flipped.
+
 ## Output
 
 The actions schema. `summary` is one sentence. Every action fully reasoned. If
