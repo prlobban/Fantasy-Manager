@@ -32,6 +32,8 @@ def _sync(ids=(1, 2, 3)):
     q._add_attempts = {}
     q._drafted = set()
     q._last_good = []
+    q._consecutive_fails = 0
+    q._cooldown = 0
     q.last_current_size = 0
     q.last_tried = 0
     return q
@@ -88,3 +90,75 @@ def test_position_one_is_still_first_among_adds():
     ops = plan_ops([], [7, 8, 9])
     adds = [o.espn_id for o in ops if o.kind == "add"]
     assert adds[0] == 7
+
+
+# ── the circuit breaker ──────────────────────────────────────────────────────
+#
+# Practice run 2, 2026-09-04: a second practice room on the same ESPN account
+# displaced ours, the page stopped accepting clicks, and the sync retried three
+# players forever at ~7s each — not reading the room for three minutes. The
+# queue is a safety net; one that eats the clock is worse than none.
+
+
+class _Op:
+    def __init__(self, espn_id, kind="add"):
+        self.kind = kind
+        self.espn_id = espn_id
+
+
+def _failing_sync(n_players=8, succeed=False):
+    q = _sync(ids=range(1, n_players + 1))
+    q._add = lambda pid: succeed          # every add fails (or succeeds)
+    q._remove = lambda pid: True
+    return q
+
+
+def test_the_breaker_trips_after_consecutive_failures():
+    q = _failing_sync()
+    ok, tried = q.apply([_Op(i) for i in range(1, 9)])
+    assert ok == 0
+    # It stops at the threshold rather than grinding through all eight.
+    assert tried <= QueueSync.BREAKER_THRESHOLD
+    assert q._cooldown == QueueSync.BREAKER_COOLDOWN
+
+
+def test_a_successful_add_resets_the_failure_run():
+    q = _failing_sync(succeed=True)
+    q.apply([_Op(i) for i in range(1, 9)])
+    assert q._consecutive_fails == 0
+    assert q._cooldown == 0
+
+
+def test_sync_stands_down_while_the_breaker_is_open():
+    """It must not even READ the queue — the whole point is spending no time."""
+    q = _sync()
+    q._cooldown = 2
+    q.read_current = lambda: (_ for _ in ()).throw(AssertionError("should not read"))
+    ops, ok = q.sync([1, 2, 3])
+    assert (ops, ok) == ([], 0)
+    assert q._cooldown == 1
+
+
+def test_the_breaker_reopens_for_a_fresh_probe():
+    """A page that recovered deserves a working queue again."""
+    q = _sync()
+    q._cooldown = 1
+    q._consecutive_fails = 9
+    q._add_attempts = {1: 4}
+    q.read_current = lambda: []
+    q.sync([1, 2, 3])
+    assert q._cooldown == 0
+    assert q._consecutive_fails == 0
+    assert q._add_attempts == {}
+
+
+def test_a_drafted_skip_is_not_evidence_the_page_is_broken():
+    """Skipping a drafted player costs nothing and says nothing about health;
+    counting it as a failure would trip the breaker on a healthy page."""
+    q = _sync(ids=(1, 2, 3))
+    q._drafted = {1, 2, 3}
+    q._remove = lambda pid: True
+    ok, tried = q.apply([_Op(i) for i in (1, 2, 3)])
+    assert ok == 0
+    assert q._consecutive_fails == 0
+    assert q._cooldown == 0

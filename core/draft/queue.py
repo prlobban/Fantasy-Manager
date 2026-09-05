@@ -94,6 +94,23 @@ class QueueSync:
     #: a toggle — a second click can REMOVE him.
     MAX_ADD_ATTEMPTS = 4
 
+    #: Consecutive failed adds before the sync stops trying for a while.
+    #:
+    #: 🔴 Observed 2026-09-04, practice run 2: a second practice room opened on
+    #: the same ESPN account displaced ours, our page went dead, and EVERY click
+    #: began timing out. The loop then spent ~7 s per player retrying three
+    #: players forever and **stopped reading the room for three minutes**. In a
+    #: live draft that loses picks.
+    #:
+    #: The queue is a safety net. A safety net that consumes the clock is worse
+    #: than no safety net, so a page that is not accepting clicks makes the sync
+    #: stand down rather than fight it. Reading the room and taking our pick
+    #: always outrank keeping the queue tidy.
+    BREAKER_THRESHOLD = 3
+
+    #: Cycles to stay stood down before probing again.
+    BREAKER_COOLDOWN = 5
+
     def __init__(self, session, by_id: dict[int, object] | None = None):
         from core.browser import selectors as S
 
@@ -117,6 +134,9 @@ class QueueSync:
         #: read. That was the whole reason the queue sat at 0.
         self._drafted: set[int] = set()
         self._last_good: list[int] = []
+        #: Consecutive add failures, and cycles left in the stand-down.
+        self._consecutive_fails = 0
+        self._cooldown = 0
         self.last_current_size = 0
         #: Ops actually attempted by the last apply(). An op the budget or an
         #: abort never reached is not a failure, and reporting it as one made
@@ -245,7 +265,18 @@ class QueueSync:
                     done = self._remove(op.espn_id)
                 else:
                     done = self._add(op.espn_id)
+                    # Only a real add attempt tells us anything about the page.
+                    if op.espn_id not in self._drafted:
+                        self._consecutive_fails = 0 if done else self._consecutive_fails + 1
                 ok += int(done)
+                if self._consecutive_fails >= self.BREAKER_THRESHOLD:
+                    self._cooldown = self.BREAKER_COOLDOWN
+                    log.error(
+                        "queue sync STOOD DOWN: %d adds in a row failed — the page is "
+                        "not accepting clicks. Skipping the queue for %d cycles so the "
+                        "loop keeps reading the room and taking picks.",
+                        self._consecutive_fails, self._cooldown)
+                    break
             except Exception as e:
                 log.warning("queue op %s %s failed: %s", op.kind, op.espn_id, e)
         self.last_tried = tried
@@ -371,6 +402,17 @@ class QueueSync:
         an op that failed to land, and what fixes a move fallback that parked
         someone at the end.
         """
+        if self._cooldown > 0:
+            self._cooldown -= 1
+            log.warning("queue sync standing down (%d cycles left) — page was not "
+                        "accepting clicks", self._cooldown)
+            if self._cooldown == 0:
+                # Probe fresh next cycle rather than staying down forever: the
+                # page may have recovered, and a working queue is worth having.
+                self._consecutive_fails = 0
+                self._add_attempts.clear()
+            return [], 0
+
         current = self.read_current()
         if current is None:
             log.warning("queue unreadable this cycle — leaving it as it stands")
