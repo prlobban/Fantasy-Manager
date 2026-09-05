@@ -26,7 +26,7 @@ from __future__ import annotations
 
 import logging
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 
 from core.browser.session import EspnSession
@@ -62,6 +62,15 @@ class DraftConfig:
     #: A League-Specific Practice Draft: skip the 10:00 order lock (the room
     #: seats us at the slot we chose) and read picks from the DOM only.
     practice: bool = False
+    #: Rehearse from a DIFFERENT seat than our current league slot.
+    #:
+    #: 🔴 The real order is randomised an hour before the draft, so rehearsing
+    #: only from today's provisional slot tests one seat out of ten and hides
+    #: anything seat-dependent — and the engine picks very differently from the
+    #: turn than from the wings. Practice only: it moves us inside
+    #: `facts.pick_order`, which is what both the room model and the practice
+    #: panel read, so the seat and the pick numbers cannot drift apart.
+    practice_slot: int | None = None
     #: §3.10 — "off": ignore the judge entirely. "shadow": read its verdict,
     #: log and post what it WOULD have changed, then draft the maths anyway.
     #: "live": apply its levers. Shadow is how a judge earns live.
@@ -116,6 +125,15 @@ def preflight(cfg: DraftConfig) -> tuple[board_mod.Board, RoomModel]:
         _assert_pick_order_final(bd)
 
     c = client()
+    if cfg.practice and cfg.practice_slot:
+        n = len(bd.facts.pick_order)
+        if not 1 <= cfg.practice_slot <= n:
+            raise RuntimeError(f"practice slot {cfg.practice_slot} is outside 1..{n}")
+        order = [t for t in bd.facts.pick_order if t != c.my_team_id]
+        order.insert(cfg.practice_slot - 1, c.my_team_id)
+        bd.facts = replace(bd.facts, pick_order=order)
+        log.warning("PRACTICE: rehearsing from slot %d (real slot is provisional "
+                    "until the order locks)", cfg.practice_slot)
     room = RoomModel(facts=bd.facts, my_team_id=c.my_team_id)
     _ = room.my_picks  # raises a readable error if we are not in the pick order
     slot = bd.facts.pick_order.index(c.my_team_id) + 1

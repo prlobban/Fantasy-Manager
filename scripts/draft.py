@@ -32,6 +32,11 @@ def main() -> int:
     ap.add_argument("--practice", action="store_true",
                     help="rehearse in a League-Specific Practice Draft: opens a room at our "
                          "real slot (or uses --url), DOM-only reads, no order lock")
+    ap.add_argument("--practice-slot", type=int, default=None,
+                    help="rehearse from this seat (1..teams) instead of our "
+                         "current league slot. Practice only -- the real order "
+                         "is randomised an hour before the draft, so one seat "
+                         "is not a rehearsal.")
     ap.add_argument("--max-minutes", type=int, default=240)
     ap.add_argument("--judge", choices=("off", "shadow", "live"), default="off",
                     help="§3.10: off ignores the judge; shadow logs and posts what it "
@@ -49,6 +54,7 @@ def main() -> int:
         max_minutes=args.max_minutes,
         draft_url=args.url,
         practice=args.practice,
+        practice_slot=args.practice_slot,
         judge=args.judge,
     ))
     print(f"\ncycles={stats.cycles} picks_seen={stats.picks_seen} "
