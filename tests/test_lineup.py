@@ -169,3 +169,63 @@ def test_diff_spots_a_benched_starter():
     del current[qb.player.espn_id]   # pretend our QB is on the bench
     plan2, _ = build(roster, current=current)
     assert any(pl_.espn_id == qb.player.espn_id for pl_, _, _, _ in plan2.changes)
+
+
+# ── §4.6 / §4.7 — Pearce, 2026-09-06 ─────────────────────────────────────────
+
+
+def test_a_tight_end_never_takes_the_flex_while_an_rb_or_wr_can_start():
+    """Kelce went into the flex over a WR on a 0.08-point edge. Never."""
+    roster = [
+        pl(1, Pos.QB, 20), pl(3, Pos.RB, 18), pl(4, Pos.RB, 14),
+        pl(6, Pos.WR, 17), pl(7, Pos.WR, 13), pl(9, Pos.TE, 11),
+        pl(10, Pos.TE, 9.0, name="TE2"), pl(8, Pos.WR, 8.3, name="WR3"),
+    ]
+    plan, _ = build(roster)
+    flex = next(a for a in plan.assignments if a.slot == "RB/WR/TE")
+    assert flex.player.name == "WR3"
+
+
+def test_a_tight_end_takes_the_flex_only_when_nobody_else_can():
+    roster = [
+        pl(1, Pos.QB, 20), pl(3, Pos.RB, 18), pl(4, Pos.RB, 14),
+        pl(6, Pos.WR, 17), pl(7, Pos.WR, 13), pl(9, Pos.TE, 11),
+        pl(10, Pos.TE, 9.0, name="TE2"),
+    ]
+    plan, _ = build(roster)
+    flex = next(a for a in plan.assignments if a.slot == "RB/WR/TE")
+    assert flex.player.name == "TE2"
+
+
+def test_a_stud_is_not_benched_on_a_small_weekly_edge():
+    """Josh Allen (ROS VOR +74) benched for Herbert (-8) on 0.9 points. No."""
+    s = settings_10()
+    allen = pl(1, Pos.QB, 18.6, name="Allen")
+    herbert = pl(2, Pos.QB, 19.5, name="Herbert")
+    roster = [allen, herbert, pl(3, Pos.RB, 18), pl(4, Pos.RB, 14),
+              pl(6, Pos.WR, 17), pl(7, Pos.WR, 13), pl(9, Pos.TE, 11)]
+    wk = value_pool(roster, s, window="week", week=9)
+    # ROS: Allen far ahead — the season number is the one with signal.
+    allen.proj_season = 380.0
+    herbert.proj_season = 250.0
+    ros = value_pool(roster, s, window="ros", weeks_remaining=8, current_week=9)
+    plan = lineup.build(roster, wk, s, week=9, ros_valuations=ros)
+    assert next(a for a in plan.assignments if a.slot == "QB").player.name == "Allen"
+
+
+def test_a_stud_is_benched_when_the_weekly_gap_is_large_or_he_cannot_play():
+    s = settings_10()
+    allen = pl(1, Pos.QB, 9.0, name="Allen")            # 10.5 behind: real gap
+    herbert = pl(2, Pos.QB, 19.5, name="Herbert")
+    roster = [allen, herbert, pl(3, Pos.RB, 18), pl(4, Pos.RB, 14),
+              pl(6, Pos.WR, 17), pl(7, Pos.WR, 13), pl(9, Pos.TE, 11)]
+    wk = value_pool(roster, s, window="week", week=9)
+    allen.proj_season, herbert.proj_season = 380.0, 250.0
+    ros = value_pool(roster, s, window="ros", weeks_remaining=8, current_week=9)
+    plan = lineup.build(roster, wk, s, week=9, ros_valuations=ros)
+    assert next(a for a in plan.assignments if a.slot == "QB").player.name == "Herbert"
+    allen.proj_week[9] = 18.6
+    allen.injury_status = InjuryStatus.OUT
+    wk = value_pool(roster, s, window="week", week=9)
+    plan = lineup.build(roster, wk, s, week=9, ros_valuations=ros)
+    assert next(a for a in plan.assignments if a.slot == "QB").player.name == "Herbert"

@@ -281,6 +281,14 @@ each earlier game finishes. Free points, and the single most common thing human 
 **§4.5 Benching a stud requires a written reason** in the operating log. If the model wants to sit a
 first-three-rounds pick, that's a signal to check the model before trusting it.
 
+**§4.6 The flex is RB/WR** *(Pearce, 2026-09-06, hard in code)*. A TE takes the flex only when no
+startable RB or WR remains. `[v1 prior: lineup.flex_prefers = RB, WR]`.
+
+**§4.7 Studs start** *(Pearce, 2026-09-06, hard in code)*. A player whose ROS VOR is at least
+`[v1 prior: 20]` above the weekly-best alternative starts unless the weekly gap exceeds
+`[v1 prior: 8.0]` points. A healthy stud is benched by a bye or an OUT/DOUBTFUL tag, not by a
+projection. The weekly number's error bar is wider than the gaps it was being asked to decide.
+
 ---
 
 ## §5 — Waivers & free agents

@@ -315,6 +315,7 @@ def build(task: str, state: ls_mod.LeagueState | None = None,
             opponent_projected=opp_proj,
             current_starters=me.starters,
             week=st.week,
+            ros_valuations=ros_vals,
         )
         packet["lineup_plan"] = {
             "projected": round(plan.projected_points, 1),

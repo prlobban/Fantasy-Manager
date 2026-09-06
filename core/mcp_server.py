@@ -157,6 +157,7 @@ def get_lineup_plan() -> str:
         opponent_projected=opp_proj,
         current_starters=s.me.starters,
         week=s.week,
+        ros_valuations=_vals(s, window="ros"),
     )
     return _ok(
         projected=round(plan.projected_points, 1),

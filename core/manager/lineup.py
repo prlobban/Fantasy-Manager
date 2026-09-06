@@ -70,14 +70,41 @@ def _startable(p: Player, v: Valuation) -> bool:
     return not v.vetoed and not p.injury_status.cannot_start
 
 
+def _flex_preferred(settings: LeagueSettings) -> tuple[Pos, ...]:
+    """§4.6 — the positions a flex is filled from before any other."""
+    raw = priors().get("lineup.flex_prefers") or []
+    out = []
+    for x in raw:
+        try:
+            out.append(Pos(str(x)))
+        except ValueError:
+            continue
+    return tuple(out)
+
+
 def optimal_lineup(
     roster: list[Player],
     valuations: dict[int, Valuation],
     settings: LeagueSettings,
     *,
     week: int | None = None,
+    ros_valuations: dict[int, Valuation] | None = None,
 ) -> LineupPlan:
-    """Maximise projected points across legal slots.
+    """Maximise projected points across legal slots — with two rules a human
+    manager applies before the arithmetic (Pearce, 2026-09-06):
+
+    §4.6 **The flex is RB/WR.** A tight end takes the flex only when no
+    startable RB or WR is left. The first read-only lineup pass put Travis
+    Kelce in the flex over a wide receiver on a 0.08-point edge; no human does
+    that, because a weekly projection is not precise to a tenth of a point
+    and a third tight end in the flex is a roster problem, not a lineup.
+
+    §4.7 **Studs start.** The same pass benched Josh Allen for Justin Herbert
+    on a 0.9-point weekly gap. A player who is far better rest-of-season is
+    started over a weekly-projection edge smaller than `lineup.stud_bench_margin`,
+    because the weekly number's error bar is wider than that gap and the
+    ROS number is the one with signal. Needs `ros_valuations`; without them
+    the rule cannot fire.
 
     Greedy by scarcity: fill the most constrained slots (single-position) before
     flex. With this many slots and players an exact assignment would also be
@@ -90,22 +117,50 @@ def optimal_lineup(
         for p in roster
         if p.espn_id in valuations and _startable(p, valuations[p.espn_id])
     }
+    prefer = _flex_preferred(settings)
+    p = priors()
+    stud_margin = float(p.get("lineup.stud_bench_margin"))
+    stud_ros_gap = float(p.get("lineup.stud_ros_gap"))
 
     slots: list[tuple[str, tuple[Pos, ...]]] = []
     for s in settings.starting_slots:
         slots.extend([(s.name, s.eligible)] * s.count)
     slots.sort(key=lambda s: len(s[1]))  # most constrained first
 
-    assignments: list[SlotAssignment] = []
-    for name, eligible in slots:
+    def _pick(eligible: tuple[Pos, ...]) -> int | None:
         best_id, best_pts = None, float("-inf")
         for pid in available:
-            p = by_id[pid]
-            if p.pos not in eligible:
+            if by_id[pid].pos not in eligible:
                 continue
             pts = valuations[pid].points
             if pts > best_pts:
                 best_id, best_pts = pid, pts
+        if best_id is None or not ros_valuations:
+            return best_id
+        # §4.7 — a much better ROS player inside the weekly margin starts.
+        best_ros = ros_valuations.get(best_id)
+        for pid in available:
+            if pid == best_id or by_id[pid].pos not in eligible:
+                continue
+            r = ros_valuations.get(pid)
+            if r is None or best_ros is None:
+                continue
+            if (r.vor - best_ros.vor >= stud_ros_gap
+                    and best_pts - valuations[pid].points < stud_margin):
+                best_id, best_pts, best_ros = pid, valuations[pid].points, r
+        return best_id
+
+    assignments: list[SlotAssignment] = []
+    for name, eligible in slots:
+        is_flex = len(eligible) > 1
+        best_id = None
+        if is_flex and prefer:
+            # §4.6 — RB/WR first; a TE only when nobody else can start.
+            narrowed = tuple(x for x in eligible if x in prefer)
+            if narrowed:
+                best_id = _pick(narrowed)
+        if best_id is None:
+            best_id = _pick(eligible)
         if best_id is None:
             assignments.append(SlotAssignment(name, None, None))
         else:
@@ -171,10 +226,14 @@ def apply_variance_preference(
         if starter_v.stdev is None:
             continue
 
+        prefer = _flex_preferred(settings)
         for pid in list(bench_ids):
             cand = by_id[pid]
             cv = valuations.get(pid)
             if cv is None or cv.stdev is None or cand.pos not in slot_eligible:
+                continue
+            # §4.6 — a variance swap never puts a TE into an RB/WR flex.
+            if len(slot_eligible) > 1 and prefer and cand.pos not in prefer:
                 continue
             if not _startable(cand, cv):
                 continue
@@ -229,9 +288,11 @@ def build(
     opponent_projected: float | None = None,
     current_starters: dict[int, str] | None = None,
     week: int | None = None,
+    ros_valuations: dict[int, Valuation] | None = None,
 ) -> LineupPlan:
     """The whole §4 decision, start to finish."""
-    plan = optimal_lineup(roster, valuations, settings, week=week)
+    plan = optimal_lineup(roster, valuations, settings, week=week,
+                          ros_valuations=ros_valuations)
     plan = apply_variance_preference(
         plan, roster, valuations, settings, opponent_projected
     )

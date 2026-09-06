@@ -15,6 +15,12 @@ mid-decision and that is the question to answer. Answer it in
 `analyst_read.detail`, in the first sentence, with the source — then fill the
 rest of the schema as usual.
 
+**Check the season.** The packet's `as_of` date and `nfl_week` are the truth.
+Search results are full of last year's schedules and previews; an opponent or
+a kickoff you cite must come from a source dated this season. Two 2026-09-06
+dossiers carried 2025 opponents as if current, and a lineup was nearly set
+on them.
+
 ## The five questions, in order of importance
 
 1. **Status.** Injury designation and the most recent practice participation

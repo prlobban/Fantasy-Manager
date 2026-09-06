@@ -32,8 +32,14 @@ If `changes` is empty, say so. If not, `set_lineup` with those moves, unless
 this morning's research contradicts them: a DNP the projection has not
 absorbed, a usage collapse, a matchup the dossier calls extreme. Then override
 and say exactly which dossier fact you are acting on (§2.8, D1.4). A `player:
-null` assignment is an unfillable slot and outranks every swap. Benching a
-first-three-round pick needs the written reason of §4.5.
+null` assignment is an unfillable slot and outranks every swap.
+
+Two rules core already applies and you never reverse on a projection (D3.6,
+D3.7): **studs start** — a player far better rest-of-season is not benched
+for a small weekly edge, whatever the dossier's matchup read says; only OUT,
+DOUBTFUL or a bye benches him — and **the flex is RB/WR**, a TE goes there
+only when no RB/WR can start. Benching a first-three-round pick needs the
+written reason of §4.5, and "his projection is 0.9 lower" is not one.
 
 ## Waivers (§5, D2, D9)
 

@@ -165,6 +165,20 @@ lineup:
   # §4.3 — bench anyone without a confirmed status this close to kickoff (minutes).
   unconfirmed_status_bench_minutes: 90
 
+  # §4.6 — the flex is filled from these positions first; a TE only when no
+  # startable RB/WR remains. (Pearce, 2026-09-06, after Kelce was put in the
+  # flex over a WR on a 0.08-point edge.)
+  flex_prefers: [RB, WR]
+
+  # §4.7 — studs start. A player whose ROS VOR is at least `stud_ros_gap`
+  # above the weekly-best alternative starts unless the weekly projection gap
+  # exceeds `stud_bench_margin`. Josh Allen (ROS VOR +73.9) was benched for
+  # Herbert (-8.5) on a 0.9-point weekly edge; the weekly number's error bar
+  # is ~6 points at QB, the ROS number is the one with signal. 8.0 means a
+  # healthy stud is, in practice, never benched on projection.
+  stud_bench_margin: 8.0
+  stud_ros_gap: 20.0
+
 waivers:
   # This league is ROLLING PRIORITY, not FAAB (read from mSettings 2026-09-03:
   # WAIVERS_TRADITIONAL, isUsingAcquisitionBudget: False). §5.3.

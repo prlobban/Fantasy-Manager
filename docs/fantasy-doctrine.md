@@ -69,6 +69,16 @@ player after each earlier window. [Playbook §4.4]
 **D3.5** Benching a first-three-round pick needs a written reason. If the reason cannot be written,
 the model is wrong, not the player. [Playbook §4.5]
 
+**D3.6** **Studs start.** *(Pearce, 2026-09-06.)* A weekly projection is a noisy number — its error
+bar at QB is wider than the gap it is being asked to decide. The rest-of-season number is the one
+with signal. A player who is far better ROS is started over a small weekly edge, and "small" is
+`lineup.stud_bench_margin`, in code. Josh Allen does not sit for Justin Herbert on 0.9 points.
+The only things that bench a healthy stud are a bye and a designation of OUT or DOUBTFUL.
+
+**D3.7** **The flex is RB/WR.** *(Pearce, 2026-09-06.)* A tight end in the flex is a roster problem
+wearing a lineup costume. He goes there only when no startable RB or WR is left; otherwise the
+surplus TE is trade capital (D5.2), not a starter.
+
 ## D4 — Trades: value is positional, and reputation is a resource
 
 **D4.1** Value a player by what he adds to **our starting lineup ROS**, not his total. Depth that
