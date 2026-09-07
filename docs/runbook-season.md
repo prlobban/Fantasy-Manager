@@ -12,9 +12,10 @@ Every command is on the box: `ssh jarvis && cd ~/Fantasy-Manager`.
 | When | What | What it does |
 |---|---|---|
 | Daily 07:00 | `research` | One research agent per player who matters today: our roster, the top waiver candidates, the trade targets. Each writes a dossier: injury designation and practice report, snap and target trend, matchup, what analysts say, dated news with sources. Validated in code; a bounded multiplier lands in the valuation. ~$8–12. |
-| Daily 07:30 | `sweep` | The manager reads this morning's research, assesses the roster (shape, holes, this week's ask), then decides: lineup, adds (max 3 a week), trade proposals (max 3 a week, 1 a day), incoming offers through the gauntlet. Every action carries the six-part reasoning. Posts the assessment and every move to #fantasy. |
+| Daily 07:30 | `sweep` | **Every day, Sunday included.** The manager reads this morning's research, assesses the roster (shape, holes, this week's ask), then decides: lineup, adds (max 3 a rolling week), trade proposals (max 3 a week, 1 a day), incoming offers through the gauntlet. Every action carries the six-part reasoning. Posts the assessment and every move to #fantasy. |
 | Tue 07:30 | `tuesday` | Pulls last week's box score. Grades every decision as a decision, not an outcome. Writes the dated review to `docs/2026-season/`, appends lessons to `data/lessons.md` (read by every future run), proposes prior changes for you. Then the normal sweep. |
-| Thu 18:30 · Sun 11:00, 15:00, 19:00 · Mon 18:30 | `lineup` | Lineup only: late news, inactives, and the late swap (§4.4). No adds, no trades. |
+| Sun 11:00 | `sweep` | A second full sweep on game day, an hour before the early kickoffs — so a stream or an add decided after 07:30 can still land for this week. Same caps. |
+| Thu 18:30 · Sun 15:00, 19:00 · Mon 18:30 | `lineup` | Lineup only: late news, inactives, and the late swap (§4.4). No adds, no trades. |
 
 ## What lands in #fantasy
 

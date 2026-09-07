@@ -4,6 +4,7 @@
 #   scripts/cron_manage.sh research      07:00 daily   — morning dossiers
 #   scripts/cron_manage.sh sweep         07:30 daily   — the full sweep
 #   scripts/cron_manage.sh tuesday       07:30 Tue     — review, then the sweep
+#   scripts/cron_manage.sh sweep         Sun 11:00     — second game-day sweep, pre-kickoff
 #   scripts/cron_manage.sh lineup        Thu/Sun/Mon   — lineup only
 #
 # Every run is gated by ENABLED: with it off the sweep still runs and still

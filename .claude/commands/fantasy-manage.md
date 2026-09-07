@@ -16,7 +16,8 @@ the laptop.
 | 07:00 daily | `research_week.py` — a dossier per rostered player, waiver candidate, trade target | none |
 | 07:30 daily | `manage.py` — assessment, lineup, adds, proposals, incoming offers | lineup · add (3/wk) · propose (3/wk, 1/day) · accept/reject |
 | 07:30 Tue | `manage.py --tuesday`, then the sweep | history file, `data/lessons.md` |
-| Thu 18:30 · Sun 11/15/19 · Mon 18:30 | `manage.py --task lineup` | lineup only |
+| Sun 11:00 | `manage.py` | second game-day sweep: adds/trades can still land before kickoff |
+| Thu 18:30 · Sun 15/19 · Mon 18:30 | `manage.py --task lineup` | lineup only |
 
 ## What is enforced in code, not in the prompt (D9: everything else is a flag)
 

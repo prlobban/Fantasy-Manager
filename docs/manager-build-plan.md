@@ -41,7 +41,8 @@ projection. Ping on Slack when human input is needed.
 | Daily 07:30 | `manage.py` — full sweep | lineup, adds (cap 3/wk), proposals (cap 3/wk, 1/day), incoming trades |
 | Tue 07:30 | `manage.py --tuesday` then the sweep | history file, lessons |
 | Thu 18:30 | `manage.py --task lineup` | lineup (TNF lock) |
-| Sun 11:00 · 15:00 · 19:00 | `manage.py --task lineup` | lineup (late news, late swap §4.4) |
+| Sun 11:00 | `manage.py` | second game-day sweep (adds, trades, lineup) — an hour before the early kickoffs |
+| Sun 15:00 · 19:00 | `manage.py --task lineup` | lineup (late news, late swap §4.4) |
 | Mon 18:30 | `manage.py --task lineup` | lineup (MNF lock) |
 
 ## Not done, by instruction
