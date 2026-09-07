@@ -49,8 +49,8 @@ echo on  > ENABLED       # writes allowed
 echo off > ENABLED       # read-and-report: every write refused, everything still posts
 ```
 
-With it **off**, every wake-up still runs and still posts what it *would* do. That
-is the mode it is installed in for Monday's test. A failed health check turns it
+With it **off**, every wake-up still runs and still posts what it *would* do.
+**It has been on since Mon 2026-09-07 09:30 CT.** A failed health check turns it
 off by itself.
 
 ## The three things that are yours
@@ -98,7 +98,8 @@ gauntlet on accepts.
   exercised against the live site, by your instruction. The first one is a
   supervised run.
 - **The lineup write** has selectors verified on 2026-09-04 but has not moved a
-  live lineup yet. Thursday 18:30 is its first real pass; watch #fantasy.
+  live lineup yet. Mon 2026-09-07 18:30 (the MNF lock pass) is its first real
+  pass with the switch on; watch #fantasy.
 - **Nothing posts to league chat.** There is no tool for it (§8.2).
 
 ## If something is wrong
