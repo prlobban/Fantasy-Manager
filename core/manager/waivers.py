@@ -370,14 +370,12 @@ def build(
 
     cands.sort(key=lambda c: -c.net_gain)
 
-    claims = [c for c in cands if c.verdict == "claim"]
-    free_adds = [c for c in cands if c.verdict == "add"]
-    skipped = [(c, "; ".join(c.flags)) for c in cands if c.flags]
-
     # D6.1 — the streamed positions are ONE decision, not N. Three defences
     # each showing as a recommended add invites burning three of the week's
     # three adds on a slot that starts one man. Only the best at each
-    # streamed position reaches the menu; the rest are named in the notes.
+    # streamed position survives; the rest are named in the notes. This runs
+    # BEFORE the recommendation lists are built, or core recommends three
+    # defences while the menu shows one (2026-09-07).
     best_streamer: dict[Pos, Candidate] = {}
     trimmed: list[Candidate] = []
     also: list[str] = []
@@ -389,6 +387,10 @@ def build(
             best_streamer[c.player.pos] = c
         trimmed.append(c)
     cands = trimmed
+
+    claims = [c for c in cands if c.verdict == "claim"]
+    free_adds = [c for c in cands if c.verdict == "add"]
+    skipped = [(c, "; ".join(c.flags)) for c in cands if c.flags]
 
     # The menu: the best by this week's gain, plus the best stashes by ROS
     # value that the weekly number would never surface (D2.3, D2.5).
