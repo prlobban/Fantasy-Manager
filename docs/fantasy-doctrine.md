@@ -127,6 +127,12 @@ priority. [S7, Playbook §5.3.3]
 **D6.2** Stream a QB or TE only when the available player has a **clearer role and matchup** than the
 one we hold, not merely a better name. [S7]
 
+**D6.3** A stream **replaces**. *(Pearce, 2026-09-07.)* One kicker, one defence, ever. Adding this
+week's defence while keeping last week's spends a bench spot on a body that cannot start and cannot
+be traded, and the drop for that add is the incumbent — not whatever the roster's general drop
+candidate happens to be. The add is also only half the move: nothing enters the lineup until
+`set_lineup` runs.
+
 ## D7 — How to learn (the Tuesday discipline)
 
 **D7.1** Grade the decision, not the outcome. Starting the 14 over the 9 was right even when it

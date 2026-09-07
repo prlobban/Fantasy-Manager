@@ -235,6 +235,14 @@ trades:
   # Their best N by ROS VOR considered as targets, per team.
   gettables_per_team: 8
 
+  # D2.4 / D5 — what one unit of roster shape is worth in ROS starting points,
+  # for RANKING ideas only (never a gate). A shortage counts double a surplus
+  # inside the score, so filling an RB hole is worth 2x this. Raise it if the
+  # engine keeps preferring points to need; lower it if it starts paying too
+  # much to tidy the roster. (Pearce, 2026-09-07: "our worst position is RB
+  # not WR — why would we trade for a wide receiver.")
+  shape_point_value: 6.0
+
   # §6.8 — the anti-fleece gauntlet on INCOMING offers.
   gauntlet:
     # §6.8.1 — minimum gain in projected ROS starting-lineup points.

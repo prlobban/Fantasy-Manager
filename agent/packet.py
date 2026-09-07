@@ -398,8 +398,12 @@ def build(task: str, state: ls_mod.LeagueState | None = None,
             "note": ("D9: our_gain is hard (§6.2); market_ratio below "
                      f"{priors().get('trades.min_market_ratio')} is refused (§6.3); "
                      "their_gain is our model's guess at THEIR lineup and is advisory. "
-                     "You may propose an offer that is not on this list — the same "
-                     "gate applies. Every proposal needs why_they_accept."),
+                     "shape_score is + for fixing our roster shape and − for breaking it, "
+                     "a shortage counting double a surplus (D2.4) — the ranking already "
+                     f"prices it at {priors().get('trades.shape_point_value')} ROS points a "
+                     "unit, but the call is yours. You may propose an offer that is not on "
+                     "this list — the same gate applies. Every proposal needs "
+                     "why_they_accept."),
             "ideas": [{
                 "to_team": p.to_team, "to_team_name": p.to_team_name,
                 "give": _side(p.give), "get": _side(p.get),
@@ -407,6 +411,7 @@ def build(task: str, state: ls_mod.LeagueState | None = None,
                 "market_out": p.market_out, "market_in": p.market_in,
                 "market_ratio": p.market_ratio,
                 "fairness": p.fairness, "shape_effect": p.shape_effect,
+                "shape_score": p.shape_score,
                 "rationale": p.rationale, "flags": p.flags, "warnings": p.warnings,
             } for p in props],
             "league_market": [

@@ -53,6 +53,14 @@ add clears `season.urgent_add_weekly_gain`. A flagged add needs the flag
 answered in `alternative` or `evidence`. Hard in code: the cap, the room, and
 §5.5 — a top-N player is never the drop.
 
+**Streaming (D6.1, D6.3).** A kicker or defence REPLACES the one we hold: core
+hands you that drop, and you never end a sweep rostering two of either. Only
+the best at each streamed position appears — they are one decision, not one
+per candidate, and burning two of the week's three adds on the same slot is
+not a decision anyone makes twice. **`add_drop` does not set a lineup**: if
+the add belongs in a starting slot, call `set_lineup` in the same sweep or the
+add buys nothing.
+
 ## Trades (§6, D4, D9)
 
 This is where humans are. The listed ideas are a starting point; you may
@@ -66,6 +74,17 @@ say to their face. Pass it as the tool argument too. A one-slot position
 holding surplus (three TEs, two QBs) is trade capital (D5.2). `propose_trade`
 is a real write: it goes to the other manager. Use one of the three only for
 an offer you would send with your name on it (D4.6).
+
+**Need over name applies here too (D2.4).** `shape_score` says what the deal
+does to our shape; a position we are SHORT costs a starting slot the first
+time someone is hurt or on bye, and no amount of surplus elsewhere covers it.
+The highest `our_gain` is not automatically the right offer — say in
+`alternative` why the need-filling one lost, if it did.
+
+**Spread the three.** One open offer per manager, and a rejected offer cannot
+be re-sent for 14 days (§6.1, in code). If the best idea is already out with
+one manager, the next proposal goes to a different one — do not spend all
+three on the same conversation.
 
 Incoming offers: the gauntlet decides, you narrate. Write the §6.8.3 sentence.
 13/13 means `accept_trade` (re-run in code). Anything else means

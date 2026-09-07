@@ -451,3 +451,114 @@ def test_ir_players_do_not_count_toward_shape():
     roster[10] = roster[10].model_copy(update={"injury_status": InjuryStatus.IR})
     shape = roster_mod.analyse(roster, _vals(roster, "ros"), settings_10())
     assert shape.by_pos[Pos.TE].delta == 1
+
+
+# ── D6.3 / D2.4 — Pearce, 2026-09-07 ─────────────────────────────────────────
+
+
+def _roster_with_dst():
+    r = _roster_3te()
+    r.append(pl(40, Pos.DST, 5.0, name="our DST"))
+    r.append(pl(41, Pos.K, 8.0, name="our K"))
+    return r
+
+
+def test_streaming_a_defence_drops_the_defence_we_hold_not_a_tight_end():
+    """2026-09-07: core proposed adding Jaguars D/ST while dropping Travis
+    Kelce, which would have left two defences on a four-man bench."""
+    roster = _roster_with_dst()
+    fa = pl(50, Pos.DST, 9.2, name="better DST")
+    ros = _vals(roster + [fa], "ros")
+    fv = _vals(roster + [fa])
+    plan = waivers.build(roster, [fa], fv, settings_10(), waiver_priority=8,
+                         bench_open=0, current_week=9, ros_valuations=ros)
+    c = next(c for c in plan.candidates if c.player.espn_id == 50)
+    assert c.drop is not None and c.drop.name == "our DST"
+    assert c.drop_cost == 0.0            # replaced in his own slot, not lost
+    assert c.drop_tradeable is False
+
+
+def test_a_defence_still_replaces_the_incumbent_when_the_bench_is_open():
+    roster = _roster_with_dst()
+    fa = pl(50, Pos.DST, 9.2, name="better DST")
+    ros = _vals(roster + [fa], "ros")
+    fv = _vals(roster + [fa])
+    plan = waivers.build(roster, [fa], fv, settings_10(), waiver_priority=8,
+                         bench_open=3, current_week=9, ros_valuations=ros)
+    c = next(c for c in plan.candidates if c.player.espn_id == 50)
+    assert c.drop is not None and c.drop.name == "our DST"
+
+
+def test_only_the_best_streamer_at_a_position_reaches_the_menu():
+    """Three defences each recommended as an add is an invitation to spend
+    all three weekly adds on one starting slot."""
+    roster = _roster_with_dst()
+    fas = [pl(50 + i, Pos.DST, 9.2 - i, name=f"DST{i}") for i in range(3)]
+    ros = _vals(roster + fas, "ros")
+    fv = _vals(roster + fas)
+    plan = waivers.build(roster, fas, fv, settings_10(), waiver_priority=8,
+                         bench_open=0, current_week=9, ros_valuations=ros)
+    dsts = [c for c in plan.candidates if c.player.pos is Pos.DST]
+    assert len(dsts) == 1 and dsts[0].player.name == "DST0"
+    assert len([c for c in plan.free_adds if c.player.pos is Pos.DST]) <= 1
+    assert any("streamed" in n for n in plan.notes)
+
+
+def test_a_shortage_counts_double_a_surplus_in_the_shape_score():
+    """RB short by one is a starting slot lost the first time someone is
+    hurt; a spare TE is a bench spot. They were scored the same."""
+    from core.manager import roster as roster_mod
+
+    s = settings_10()
+    short_rb = [pl(1, Pos.QB, 20), pl(3, Pos.RB, 14),
+                pl(6, Pos.WR, 15), pl(7, Pos.WR, 12), pl(8, Pos.WR, 9),
+                pl(9, Pos.TE, 10), pl(10, Pos.TE, 8)]
+    v = _vals(short_rb, "ros")
+    before = roster_mod.analyse(short_rb, v, s)
+    fixed = short_rb + [pl(4, Pos.RB, 13), pl(5, Pos.RB, 11)]
+    fv = _vals(fixed, "ros")
+    _w, fix_short = trades_out._shape_effect(before, roster_mod.analyse(fixed, fv, s))
+    # Dropping the spare TE only converts a surplus.
+    tidy = [p for p in short_rb if p.espn_id != 10]
+    tv = _vals(tidy, "ros")
+    _w2, fix_surplus = trades_out._shape_effect(before, roster_mod.analyse(tidy, tv, s))
+    assert fix_short > fix_surplus > 0
+
+
+def test_a_deal_that_leaves_us_short_is_flagged_by_name():
+    """We are RB short. An offer that brings back a receiver instead still
+    leaves the hole, and the agent is told so in words (Pearce, 2026-09-07)."""
+    ours = _roster_3te()                      # RB short by 1
+    theirs = [pl(21, Pos.QB, 19), pl(26, Pos.WR, 22, name="their WR1"),
+              pl(27, Pos.WR, 11), pl(28, Pos.TE, 4)]
+    v = _vals(ours + theirs, "ros")
+    props = trades_out.build(ours, {2: ("them", theirs)}, v, settings_10(), week=3)
+    assert props
+    p = props[0]
+    assert p.get[0].pos is Pos.WR
+    assert any("D2.4" in f and "RB short" in f for f in p.flags)
+
+
+def test_the_shape_score_is_priced_into_the_ranking():
+    """Two offers from the same manager: more points, or the hole filled.
+    Both are shown, and the ranking prices shape rather than counting arrows."""
+    from core.model import priors as P
+
+    ours = _roster_3te()
+    theirs = [pl(21, Pos.QB, 19), pl(23, Pos.RB, 16, name="their RB"),
+              pl(26, Pos.WR, 17, name="their WR"), pl(27, Pos.WR, 11),
+              pl(28, Pos.TE, 4)]
+    v = _vals(ours + theirs, "ros")
+    with P.overridden(**{"trades.shape_point_value": 0.0}):
+        points_first = trades_out.build(
+            ours, {2: ("them", theirs)}, v, settings_10(), week=3)[0]
+    with P.overridden(**{"trades.shape_point_value": 40.0}):
+        shape_first = trades_out.build(
+            ours, {2: ("them", theirs)}, v, settings_10(), week=3)[0]
+    # Unpriced, the best-by-points package ships a running back off a roster
+    # that is already RB short. Priced, the same points are had without it.
+    assert points_first.shape_score < 0
+    assert any(x.pos is Pos.RB for x in points_first.give)
+    assert shape_first.shape_score > 0
+    assert not any(x.pos is Pos.RB for x in shape_first.give)
+    assert shape_first.our_gain >= points_first.our_gain

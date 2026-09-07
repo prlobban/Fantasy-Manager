@@ -56,6 +56,9 @@ class Proposal:
     fairness: str
     #: What the deal does to our roster shape, in words.
     shape_effect: str = ""
+    #: ...and as a number: + fixes shape, − breaks it. A shortage counts
+    #: double a surplus. Worth `trades.shape_point_value` ROS points each.
+    shape_score: int = 0
     #: Market value we send / market value we receive (D9).
     market_out: float = 0.0
     market_in: float = 0.0
@@ -91,8 +94,15 @@ def _delta(roster, give, get, vals, settings) -> float:
 
 
 def _shape_effect(before: roster_mod.RosterShape, after: roster_mod.RosterShape) -> tuple[str, int]:
-    """Words and a score: +1 for every surplus/shortage the deal removes,
-    −1 for every one it creates."""
+    """Words and a score for what the deal does to our roster shape.
+
+    A SHORTAGE and a SURPLUS are not the same size of problem, and the first
+    version scored them identically (±1 each) — which is how a deal that left
+    RB short kept outranking one that fixed it (Pearce, 2026-09-07). A
+    shortage costs a starting slot outright the first time someone is hurt or
+    on bye; a surplus costs a bench spot. So fixing or creating a shortage
+    moves the score twice as far as fixing or creating a surplus.
+    """
     words, score = [], 0
     for pos in Pos:
         b = before.by_pos.get(pos)
@@ -101,11 +111,13 @@ def _shape_effect(before: roster_mod.RosterShape, after: roster_mod.RosterShape)
         ad = a.delta if a else 0
         if bd == ad:
             continue
+        # A shortage on either side of the deal is the expensive kind.
+        weight = 2 if (bd < 0 or ad < 0) else 1
         if abs(ad) < abs(bd):
-            score += 1
+            score += weight
             words.append(f"{pos.value} {'surplus' if bd > 0 else 'shortage'} {abs(bd)}→{abs(ad)}")
         else:
-            score -= 1
+            score -= weight
             words.append(f"{pos.value} becomes {'surplus' if ad > 0 else 'short'} {abs(ad)}")
     return "; ".join(words) or "shape unchanged", score
 
@@ -230,6 +242,13 @@ def build(
                              "carries this one; say why they accept")
             if score < 0:
                 flags.append(f"D5 creates a shape problem: {effect}")
+            short_after = roster_mod.analyse(after_roster, valuations, settings).short
+            if short_after:
+                flags.append(
+                    "D2.4 need over name: this deal leaves "
+                    + ", ".join(f"{k.value} short {v}" for k, v in short_after.items())
+                    + " — a shortage costs a starting slot the first time "
+                      "someone is hurt or on bye")
             if ratio > 1.3:
                 flags.append(f"D9 we overpay by market ({ratio:.2f}) — fine if the "
                              "lineup gain is real, but do not add a sweetener")
@@ -250,16 +269,19 @@ def build(
                     + (f"; {give[0].name} would start for them (+{theirs:.1f})"
                        if theirs > 0 else "")
                 ),
-                fairness=fairness, shape_effect=effect,
+                fairness=fairness, shape_effect=effect, shape_score=score,
                 market_out=m_out, market_in=m_in,
                 warnings=warnings, flags=flags,
             ))
 
     # Offers our own model says help them first (advisory, but a better bet),
-    # then best for us with a bonus for fixing our shape, then the market read.
+    # then by ROS starting points PLUS what the deal does to our shape, priced
+    # in the same unit. The old key counted "→" characters in a sentence,
+    # which weighted a fixed shortage the same as a converted surplus.
+    shape_pts = float(p.get("trades.shape_point_value"))
     proposals.sort(key=lambda pr: (
         pr.their_gain <= 0,
-        -(pr.our_gain + 3.0 * pr.shape_effect.count("→")),
+        -(pr.our_gain + shape_pts * pr.shape_score),
         -pr.market_ratio))
     # One idea per counterparty at the top, so three slots are not spent on
     # one manager (§6.1 max_open_offers_per_manager).

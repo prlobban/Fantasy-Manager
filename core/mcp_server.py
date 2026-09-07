@@ -469,8 +469,9 @@ def get_trade_ideas() -> str:
         proposals_left_today=day_left,
         proposals_left_this_week=week_left,
         note=("our_gain is hard (§6.2); market_ratio under the floor is refused (§6.3); "
-              "their_gain_advisory is our model's guess. Any offer, listed or not, goes "
-              "through the same gate. Say why they accept (D9)."),
+              "their_gain_advisory is our model's guess. shape_score is + for fixing our "
+              "shape and − for breaking it, a shortage counting double a surplus (D2.4). "
+              "Any offer, listed or not, goes through the same gate. Say why they accept (D9)."),
         proposals=[{
             "to_team": p.to_team, "to_team_name": p.to_team_name,
             "give": _side(p.give), "get": _side(p.get),
@@ -478,6 +479,7 @@ def get_trade_ideas() -> str:
             "market_out": p.market_out, "market_in": p.market_in,
             "market_ratio": p.market_ratio,
             "fairness": p.fairness, "shape_effect": p.shape_effect,
+            "shape_score": p.shape_score,
             "rationale": p.rationale, "flags": p.flags, "warnings": p.warnings,
         } for p in props],
     )

@@ -255,6 +255,40 @@ def choose_drop(
     return pl, cost, reason, tradeable
 
 
+#: Positions that are streamed weekly (D6.1) — one body, replaced not stacked.
+_STREAMED = (Pos.K, Pos.DST)
+
+
+def drop_for(
+    cand: Player,
+    roster: list[Player],
+    settings: LeagueSettings,
+    ros: dict[int, Valuation],
+    fallback: tuple[Player | None, float, bool],
+) -> tuple[Player | None, float, bool]:
+    """§5.4 / D6.1 — the drop THIS add implies, not the roster's global drop.
+
+    Streaming a defence or a kicker replaces the one we hold. The global drop
+    candidate is chosen for the roster as a whole (the surplus tight end), and
+    using it here is how the 2026-09-07 sweep proposed adding Jaguars D/ST
+    while dropping Travis Kelce — leaving two defences on a four-man bench,
+    one of which can never start. The agent caught it in its own uncertainties
+    and shipped it anyway, because core handed it that drop.
+
+    Cost is 0.0: the incumbent is being replaced in his own slot, so his
+    points do not leave the lineup. And he is never trade capital — nobody
+    trades for a streamed defence.
+    """
+    if cand.pos not in _STREAMED:
+        return fallback
+    incumbents = [p for p in roster if p.pos is cand.pos]
+    if len(incumbents) < max(1, settings.starters_at(cand.pos)):
+        return fallback          # an open slot — this is not a replacement
+    worst = min(incumbents,
+                key=lambda p: ros[p.espn_id].vor if p.espn_id in ros else 0.0)
+    return worst, 0.0, False
+
+
 def _weeks_until_return(pl: Player, current_week: int) -> int | None:
     future = [w for w, pts in pl.proj_week.items() if w > current_week and pts > 0]
     return min(future) - current_week if future else None
@@ -315,12 +349,17 @@ def build(
         if v is None or v.vetoed:
             continue
         gain, replaces = weekly_gain_for(fa, v, roster, valuations, settings)
-        needs_drop = bench_open <= 0
+        # D6.1 — a streamed position replaces its own incumbent (see drop_for).
+        # That drop happens whether or not a bench spot is open: two defences
+        # is never the answer.
+        c_drop, c_cost, c_trade = drop_for(fa, roster, settings, ros,
+                                           (drop, drop_cost, tradeable))
+        needs_drop = bench_open <= 0 or fa.pos in _STREAMED
         c = Candidate(
             player=fa, valuation=v, replaces=replaces, weekly_gain=gain,
-            drop=drop if needs_drop else None,
-            drop_cost=drop_cost if needs_drop else 0.0,
-            drop_tradeable=tradeable if needs_drop else False,
+            drop=c_drop if needs_drop else None,
+            drop_cost=c_cost if needs_drop else 0.0,
+            drop_tradeable=c_trade if needs_drop else False,
             archetype=classify(fa, v, gain, our_rb1),
             is_free_agent=fa.espn_id not in on_waivers,
             ros_vor=round(ros[fa.espn_id].vor, 1) if fa.espn_id in ros else None,
@@ -334,6 +373,22 @@ def build(
     claims = [c for c in cands if c.verdict == "claim"]
     free_adds = [c for c in cands if c.verdict == "add"]
     skipped = [(c, "; ".join(c.flags)) for c in cands if c.flags]
+
+    # D6.1 — the streamed positions are ONE decision, not N. Three defences
+    # each showing as a recommended add invites burning three of the week's
+    # three adds on a slot that starts one man. Only the best at each
+    # streamed position reaches the menu; the rest are named in the notes.
+    best_streamer: dict[Pos, Candidate] = {}
+    trimmed: list[Candidate] = []
+    also: list[str] = []
+    for c in cands:
+        if c.player.pos in _STREAMED:
+            if c.player.pos in best_streamer:
+                also.append(f"{c.player.name} +{c.net_gain:.1f}")
+                continue
+            best_streamer[c.player.pos] = c
+        trimmed.append(c)
+    cands = trimmed
 
     # The menu: the best by this week's gain, plus the best stashes by ROS
     # value that the weekly number would never surface (D2.3, D2.5).
@@ -363,6 +418,13 @@ def build(
         plan.notes.append(f"{bench_open} bench spot(s) open — no drop needed")
     if adds_left is not None:
         plan.notes.append(f"§5.7: {adds_left} of {cap} roster adds left this week")
+    for pos, c in best_streamer.items():
+        plan.notes.append(
+            f"D6.1 {pos.value} is streamed: {c.player.name} is the best of the week and "
+            f"replaces {c.drop.name if c.drop else 'nobody'} in that slot — ONE add, not "
+            f"one per candidate. Also available: {', '.join(also[:4]) or 'nobody close'}")
+    plan.notes.append("an add that changes the best lineup needs set_lineup in the same "
+                      "sweep — add_drop does not move anyone into a starting slot")
     plan.notes.append("flags are core's objections, not refusals — the gate only "
                       "enforces the weekly cap, roster room and §5.5 (D9)")
     return plan
