@@ -614,7 +614,8 @@ def propose_trade(to_team: int, give_ids: list[int], get_ids: list[int],
     It is logged and graded on Tuesday against what they actually did.
 
     This goes to another human. Use one of the three only for an offer you
-    would send with your name on it (D4.6).
+    would send with your name on it (D4.6). Three a week is a ceiling, not a
+    quota (D4.7): most days the right number is zero.
     """
     if len((why_they_accept or "").strip()) < 30:
         return _ok(allowed=False, refused_by="D9",

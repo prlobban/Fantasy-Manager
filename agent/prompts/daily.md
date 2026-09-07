@@ -81,6 +81,15 @@ time someone is hurt or on bye, and no amount of surplus elsewhere covers it.
 The highest `our_gain` is not automatically the right offer — say in
 `alternative` why the need-filling one lost, if it did.
 
+**Three a week is a ceiling, not a quota (D4.7).** Most days the right number
+of proposals is zero. An offer goes out only when it is genuinely the best
+value available to us AND reads fair to them: a real starting-lineup gain,
+not a marginal one (ideas under `trades.marginal_gain` are flagged), a market
+ratio near even, and a `why_they_accept` you would say to their face. If the
+best idea on the board is marginal, wait — a better one shows up after
+Sunday's box scores, and an unsent offer costs nothing while a weak one costs
+a manager's goodwill for the season. Never send one because a slot is unused.
+
 **Spread the three.** One open offer per manager, and a rejected offer cannot
 be re-sent for 14 days (§6.1, in code). If the best idea is already out with
 one manager, the next proposal goes to a different one — do not spend all

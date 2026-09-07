@@ -235,6 +235,11 @@ trades:
   # Their best N by ROS VOR considered as targets, per team.
   gettables_per_team: 8
 
+  # D4.7 — an idea below this many ROS starting points is flagged "marginal":
+  # not worth one of the week's three slots or a manager's goodwill. A flag,
+  # not a gate (D9). Pearce, 2026-09-07: the cap is a ceiling, not a quota.
+  marginal_gain: 10.0
+
   # D2.4 / D5 — what one unit of roster shape is worth in ROS starting points,
   # for RANKING ideas only (never a gate). A shortage counts double a surplus
   # inside the score, so filling an RB hole is worth 2x this. Raise it if the

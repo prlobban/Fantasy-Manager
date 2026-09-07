@@ -236,6 +236,9 @@ def build(
                 our_shape, roster_mod.analyse(after_roster, valuations, settings))
 
             flags: list[str] = []
+            if ours < float(p.get("trades.marginal_gain")):
+                flags.append(f"D4.7 marginal: +{ours:.1f} ROS starting pts is not worth a "
+                             "slot or a manager's goodwill — wait for a better board")
             if theirs <= 0:
                 flags.append(f"§6.3 our model says their lineup does not improve "
                              f"({theirs:+.1f}) — the market ratio {ratio:.2f} is what "

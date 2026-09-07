@@ -103,6 +103,12 @@ the wait. This is the rule the 09-05 roster needs most: three tight ends, one st
 league of friends a reputation for hunting people costs more than any single deal wins.
 [Playbook §6.3]
 
+**D4.7** **The cap is a ceiling, not a quota.** *(Pearce, 2026-09-07.)* Three proposals a week is
+the most, not the target. Days and whole weeks can pass with none. An offer is sent when something
+on the board is genuinely the best value available to us and fair to them — never because a slot is
+unused, and never on the first three days because they are the first three. The generator will
+always produce a "best idea"; that is a ranking, not a recommendation to act.
+
 ## D5 — Roster shape
 
 **D5.1** A working 10-team redraft roster with 4 bench spots: 1 QB, 2–3 startable RB, 3–4 startable
