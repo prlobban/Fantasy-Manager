@@ -55,6 +55,12 @@ countering 🔴 never · league settings / chat 🔴 never.
 
 ## Change log — newest first
 
+**2026-09-07 09:30 CT — 🔴 THE SWITCH IS ON.** `ENABLED=on` on the box, on Pearce's instruction.
+Every write is now live against the real league: lineup, add/drop, outgoing proposals, and accepts
+that clear the §6.8 gauntlet. Health was green at the flip. **Still unproven against live ESPN:**
+`set_lineup` (selectors verified 2026-09-04, never used to move a real lineup), `propose_trade`,
+`accept_trade`, `reject_trade`. The first firing of each is the test. Kill: `echo off > ENABLED`.
+
 **2026-09-05 (night) — Reasoning drives; the math annotates (D9).** Pearce's second brief after
 the first read-only sweep: *"mostly reasoning backing the engine rather than straight math."* The
 waiver plan now returns every candidate with `flags` instead of hiding the skips; trade ideas carry
