@@ -279,7 +279,9 @@ def _name_patterns(name: str) -> list:
     if name.upper().endswith("D/ST"):
         base = name[: -len("D/ST")].strip()
         if base:
-            pats.append(_re.compile(rf"{_re.escape(base)}\b.*D/ST", _re.I | _re.S))
+            # [\s\S], not . — Playwright hands the pattern to a JS regex with
+            # no DOTALL, and a row's text is newline-separated per cell.
+            pats.append(_re.compile(rf"{_re.escape(base)}\b[\s\S]*D/ST", _re.I))
     return pats
 
 
