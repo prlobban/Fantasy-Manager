@@ -129,9 +129,46 @@ LINEUP_HERE_BUTTON = "button:has-text('HERE'), button:has-text('Here')"
 #: the first button of a different player.
 ANY_ROW = "tr, li, [class*=row], [class*=Row], [class*=card], [class*=Card]"
 
-ADD_PLAYER_BUTTON = "button:has-text('Add'), button:has-text('Claim')"
-DROP_PLAYER_BUTTON = "button:has-text('Drop')"
-CONFIRM_BUTTON = "button:has-text('Confirm'), button:has-text('Yes'), button:has-text('Continue')"
+#: ✅ VERIFIED 2026-09-08 on /football/players/add. The Add control is an ICON
+#: button with NO text — title="Add", class `add-action-btn`. The old
+#: `button:has-text('Add')` matched zero elements, which is half of why every
+#: write failed on 2026-09-08. The other half: the search box needs ENTER.
+ADD_PLAYER_BUTTON = (
+    "button.add-action-btn, "
+    "button[title='Add' i], "
+    "button[aria-label^='Add ' i], "
+    "button:has-text('Add'), button:has-text('Claim')"
+)
+
+#: ✅ VERIFIED 2026-09-08 in the add modal. Each roster row renders an enabled
+#: DROP (`drop-action-btn`) and ESPN also renders a disabled "Can´t drop"
+#: variant elsewhere in the modal. Never take the disabled one.
+DROP_PLAYER_BUTTON = (
+    "button.drop-action-btn:not(.Button--disabled), "
+    "button.drop-action-btn, "
+    "button:has-text('Drop'):not(.Button--disabled)"
+)
+
+#: ✅ VERIFIED 2026-09-08 — the add modal commits on "Continue", which is
+#: DISABLED until a drop has been selected.
+CONFIRM_BUTTON = (
+    "button:has-text('Confirm'), button:has-text('Yes'), "
+    "button:has-text('Continue')"
+)
+
+#: A row in an ESPN player table — the FA list, the add modal, a team roster.
+#: These are `Table__TR`; the draft room's virtualised FixedDataTable is a
+#: different animal and has its own selector above.
+PLAYER_TABLE_ROW = "tr.Table__TR, table tbody tr, tr"
+
+#: The free-agent / players page search box. Like the draft room's, it filters
+#: on ENTER — typing alone leaves the table unfiltered while showing an
+#: autocomplete dropdown, which reads as "found nothing" to a row scan.
+PLAYER_SEARCH = (
+    "input[placeholder*='Search' i], "
+    "input[placeholder='Player Name'], "
+    "input[type=search]"
+)
 
 # ── trades ───────────────────────────────────────────────────────────────────
 
@@ -139,7 +176,11 @@ TRADE_PROPOSE_BUTTON = "button:has-text('Propose Trade'), a:has-text('Propose Tr
 TRADE_ACCEPT_BUTTON = "button:has-text('Accept')"
 TRADE_REJECT_BUTTON = "button:has-text('Reject'), button:has-text('Decline')"
 TRADE_PLAYER_CHECKBOX = "input[type=checkbox], [role=checkbox]"
-TRADE_REVIEW_BUTTON = "button:has-text('Review Trade'), button:has-text('Review')"
+#: ✅ VERIFIED 2026-09-08 — the Propose Trade page's footer button reads
+#: "Continue", not "Review Trade" (2026-09-08: all three ticks landed and the
+#: offer died here). What the NEXT page's send button reads is still unknown.
+TRADE_REVIEW_BUTTON = ("button:has-text('Continue'), "
+                       "button:has-text('Review Trade'), button:has-text('Review')")
 TRADE_SEND_BUTTON = ("button:has-text('Send Trade'), button:has-text('Send Offer'), "
                      "button:has-text('Propose')")
 

@@ -240,15 +240,29 @@ def _slot_row_with_here(page, slot: str):
     return None
 
 
-def _row_for_player(page, espn_id: int):
-    rows = page.locator(S.LINEUP_SLOT_ROW)
-    for i in range(rows.count()):
+def _row_for_player(page, espn_id: int, name: str | None = None):
+    """The table row for a player: by ESPN id in the markup, else by name.
+
+    The id lives in the headshot URL, which is why the id path works at all —
+    and why it CANNOT work for a defence. A D/ST has no headshot and no
+    positive id (the Browns are -16005), so the id scan silently returns None
+    and the caller skips the drop, leaving a disabled Continue and a write
+    that reports success while nothing happened. Name is the fallback, and
+    for a defence it is the only path.
+    """
+    rows = page.locator(S.PLAYER_TABLE_ROW)
+    n = rows.count()
+    for i in range(n):
         try:
-            html = rows.nth(i).inner_html()
-            if str(espn_id) in html:
+            if str(espn_id) in rows.nth(i).inner_html():
                 return rows.nth(i)
         except Exception:
             continue
+    if name:
+        import re as _re
+        hit = rows.filter(has_text=_re.compile(_re.escape(name), _re.I))
+        if hit.count():
+            return hit.first
     return None
 
 
@@ -261,25 +275,46 @@ def add_drop(s: EspnSession, league_id: int, season: int,
     page = s.goto(f"/football/players/add?leagueId={league_id}&seasonId={season}")
     s.dismiss_overlays()
 
-    box = _need(page, S.DRAFT_SEARCH, what="the player search box")
+    box = _need(page, S.PLAYER_SEARCH, S.DRAFT_SEARCH, what="the player search box")
     box.first.fill(add_name)
-    page.wait_for_timeout(800)
+    page.wait_for_timeout(600)
+    # The table filters on ENTER. Typing alone leaves the full free-agent list
+    # rendered under an autocomplete dropdown — which is exactly how the
+    # 2026-09-08 sweep read "no Add button for Jordan Mason" off a page that
+    # was showing 200 other players.
+    box.first.press("Enter")
+    page.wait_for_timeout(2500)
 
     btn = _need_in_row(page, add_name, S.ADD_PLAYER_BUTTON, what="an Add/Claim button")
     btn.first.click()
-    page.wait_for_timeout(1000)
+    page.wait_for_timeout(2000)
 
-    if drop_id and drop_name:
-        row = _row_for_player(page, drop_id)
-        if row is not None:
-            d = row.locator(S.DROP_PLAYER_BUTTON)
-            if d.count():
-                d.first.click()
-                page.wait_for_timeout(600)
+    if drop_name:
+        row = _row_for_player(page, drop_id or 0, drop_name)
+        if row is None:
+            raise ActionFailed(
+                f"the add modal has no row for {drop_name!r} — nothing was added. "
+                "A drop we cannot select leaves Continue disabled, and a click "
+                "on it would report success while the roster never changed."
+            )
+        d = row.locator(S.DROP_PLAYER_BUTTON)
+        if d.count() == 0:
+            raise ActionFailed(f"no enabled DROP button on the row for {drop_name!r}")
+        d.first.click()
+        page.wait_for_timeout(800)
 
-    confirm = S.first_present(page, S.CONFIRM_BUTTON)
-    if confirm is not None:
-        confirm.first.click()
+    confirm = _need(page, S.CONFIRM_BUTTON, what="the Continue/Confirm button")
+    if confirm.first.is_disabled():
+        raise ActionFailed(
+            "Continue is still disabled after selecting the drop — ESPN has not "
+            "accepted the transaction, so nothing was committed."
+        )
+    confirm.first.click()
+    page.wait_for_timeout(1500)
+    # ESPN sometimes puts a second confirmation behind the first.
+    again = S.first_present(page, S.CONFIRM_BUTTON)
+    if again is not None and again.count() and not again.first.is_disabled():
+        again.first.click()
         page.wait_for_timeout(1200)
 
     detail = f"add {add_name}" + (f", drop {drop_name}" if drop_name else "")
