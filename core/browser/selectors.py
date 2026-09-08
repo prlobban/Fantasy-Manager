@@ -181,6 +181,11 @@ TRADE_PLAYER_CHECKBOX = "input[type=checkbox], [role=checkbox]"
 #: offer died here). What the NEXT page's send button reads is still unknown.
 TRADE_REVIEW_BUTTON = ("button:has-text('Continue'), "
                        "button:has-text('Review Trade'), button:has-text('Review')")
+#: ✅ VERIFIED 2026-09-08 — ESPN paints a green bar on success:
+#: "Your trade offer has been confirmed and sent". A send with no banner is a
+#: send we cannot claim happened.
+TRADE_SENT_BANNER = "confirmed and sent"
+
 TRADE_SEND_BUTTON = ("button:has-text('Send Trade'), button:has-text('Send Offer'), "
                      "button:has-text('Propose')")
 

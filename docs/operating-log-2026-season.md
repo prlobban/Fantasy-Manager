@@ -82,9 +82,15 @@ Verified 2026-09-08 by driving the fixed add path to one click short of commit �
 ENTER → `+` → select the Browns D/ST as the drop → Continue **enabled** → Cancel. Nothing was
 committed.
 
+**Then, on Pearce's go: the first real trade of the season went out.** 09:36 CT — Justin
+Herbert + Kyle Pitts Sr. to GLOBO GYM PURPLE COBRAS for Garrett Wilson. Sent through the gated
+tool, not by hand, so §6.1–§6.5 ran, the rate limit was recorded and the decision logged.
+`§6.2 us +51.9 · market ratio 0.91 · their model gain +6.1`. ESPN confirmed it: "Your trade offer
+has been confirmed and sent", Pending Moves 1. `propose_trade` now only reports *verified* when
+that banner is on the page.
+
 Still unproven: **`set_lineup`** (every pass since the switch has found no change to make) and
-**the trade send button after Continue** — verifying that one means sending a real offer, so it
-waits on Pearce's word.
+**`accept_trade` / `reject_trade`** (no incoming offer yet).
 
 **2026-09-07 09:30 CT — 🔴 THE SWITCH IS ON.** `ENABLED=on` on the box, on Pearce's instruction.
 Every write is now live against the real league: lineup, add/drop, outgoing proposals, and accepts

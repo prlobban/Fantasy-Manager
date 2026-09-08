@@ -95,12 +95,12 @@ gauntlet on accepts.
 
 **Proven 2026-09-08:** the add/drop path — search, ENTER, the icon `+`, the drop
 modal, an enabled Continue — driven to one click short of commit and cancelled.
-The Propose Trade page opens, ticks all three players and assembles the offer.
+And **`propose_trade` end to end**: on Pearce's go, Herbert + Pitts → Garrett
+Wilson went to GLOBO GYM at 09:36 CT and ESPN confirmed it. A send is now only
+called verified when ESPN paints "confirmed and sent".
 
 **Not proven:**
 
-- **The trade SEND button**, the one click past "Continue". Verifying it means
-  sending a real offer, so it needs your word first.
 - **`accept_trade` / `reject_trade`** — no incoming offer has arrived yet.
 - **`set_lineup`** has verified selectors (2026-09-04) but has still not moved a
   live lineup: every pass since the switch went on has found nothing to change.

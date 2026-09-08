@@ -411,11 +411,19 @@ def propose_trade(s: EspnSession, league_id: int, season: int, to_team_id: int,
     page.wait_for_timeout(1200)
     send = _need(page, S.TRADE_SEND_BUTTON, what="the Send Trade button")
     send.first.click()
-    page.wait_for_timeout(1500)
+    page.wait_for_timeout(2500)
+
+    # ESPN paints "Your trade offer has been confirmed and sent" on success.
+    # Without it we do not know whether the offer landed, and a receipt that
+    # says "verified" when it isn't is worse than no receipt at all.
+    try:
+        sent = S.TRADE_SENT_BANNER.lower() in page.inner_text("body").lower()
+    except Exception:
+        sent = False
 
     detail = (f"to team {to_team_id}: give {', '.join(n for _, n in give)} / "
               f"get {', '.join(n for _, n in get)}")
-    return _receipt(s, "propose trade", detail, verified=False)
+    return _receipt(s, "propose trade", detail, verified=sent)
 
 
 def accept_trade(s: EspnSession, league_id: int, season: int, offer_id: str,
