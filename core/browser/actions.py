@@ -259,11 +259,28 @@ def _row_for_player(page, espn_id: int, name: str | None = None):
         except Exception:
             continue
     if name:
-        import re as _re
-        hit = rows.filter(has_text=_re.compile(_re.escape(name), _re.I))
-        if hit.count():
-            return hit.first
+        for pat in _name_patterns(name):
+            hit = rows.filter(has_text=pat)
+            if hit.count():
+                return hit.first
     return None
+
+
+def _name_patterns(name: str) -> list:
+    """Progressively looser ways ESPN might have written this player's name.
+
+    A defence is "Browns D/ST" to us and renders as "D/ST Browns CLE D/ST" —
+    the pro-team abbreviation sits BETWEEN the two halves, so a literal match
+    on our own name never fires. Match the city on a row that also says D/ST.
+    """
+    import re as _re
+
+    pats = [_re.compile(_re.escape(name), _re.I)]
+    if name.upper().endswith("D/ST"):
+        base = name[: -len("D/ST")].strip()
+        if base:
+            pats.append(_re.compile(rf"{_re.escape(base)}\b.*D/ST", _re.I | _re.S))
+    return pats
 
 
 # ── waivers / free agents ────────────────────────────────────────────────────
