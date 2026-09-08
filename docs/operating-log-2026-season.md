@@ -55,6 +55,37 @@ countering 🔴 never · league settings / chat 🔴 never.
 
 ## Change log — newest first
 
+**2026-09-08 — the first live sweep wrote nothing, and the gates were not why.**
+Tuesday's 07:30 sweep decided three writes — stream the Jaguars D/ST over the Browns, add
+Jordan Mason over Travis Kelce, offer Herbert + Pitts to GLOBO GYM for Garrett Wilson — and
+**all three failed in the browser layer with `ActionFailed`, not a §8.4 refusal.** The agent
+caught it itself, escalated, and did not retry. Four bugs, all in `core/browser/`, all now
+fixed and verified against the live page:
+
+1. **The free-agent search filters on ENTER.** `fill()` alone left the entire FA list rendered
+   under an autocomplete dropdown, so the row scan for the target found nothing. The draft-room
+   code has known this since 09-04; the waiver path never learned it.
+2. **The Add control is an icon button with no text** — `title="Add"`, `.add-action-btn`.
+   `button:has-text('Add')` matched zero elements.
+3. **`_row_for_player` matched the ESPN id in the headshot URL** — which a D/ST does not have.
+   The drop was silently skipped and a disabled Continue clicked: a write that would have
+   reported success while the roster never changed. Now falls back to the name and **fails
+   closed** if the drop row is missing.
+4. **The trade page's footer button reads "Continue"**, not "Review Trade". Everything before it
+   worked: the Propose Trade page opened, all three players ticked, the offer was assembled.
+
+Also learned, and worth carrying: **Playwright's `has_text=` regex runs in JS, not Python.**
+A pattern spanning two cells (`Browns` … `D/ST`, separated by newlines and tabs) matches
+nothing and raises no error. Row matching now reads `inner_text()` in Python.
+
+Verified 2026-09-08 by driving the fixed add path to one click short of commit — search →
+ENTER → `+` → select the Browns D/ST as the drop → Continue **enabled** → Cancel. Nothing was
+committed.
+
+Still unproven: **`set_lineup`** (every pass since the switch has found no change to make) and
+**the trade send button after Continue** — verifying that one means sending a real offer, so it
+waits on Pearce's word.
+
 **2026-09-07 09:30 CT — 🔴 THE SWITCH IS ON.** `ENABLED=on` on the box, on Pearce's instruction.
 Every write is now live against the real league: lineup, add/drop, outgoing proposals, and accepts
 that clear the §6.8 gauntlet. Health was green at the flip. **Still unproven against live ESPN:**

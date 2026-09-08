@@ -91,16 +91,23 @@ dropping a top-5 player, the proposal limits, our lineup must improve, the
 market-ratio floor on offers, no top-3 asset for a package, and the trade
 gauntlet on accepts.
 
-## What is deliberately not proven yet
+## What is proven, and what is not
 
-- **Trades against ESPN.** `propose_trade`, `accept_trade` and `reject_trade`
-  reach the browser through the write gate, but none of the three has been
-  exercised against the live site, by your instruction. The first one is a
-  supervised run.
-- **The lineup write** has selectors verified on 2026-09-04 but has not moved a
-  live lineup yet. Mon 2026-09-07 18:30 (the MNF lock pass) is its first real
-  pass with the switch on; watch #fantasy.
+**Proven 2026-09-08:** the add/drop path — search, ENTER, the icon `+`, the drop
+modal, an enabled Continue — driven to one click short of commit and cancelled.
+The Propose Trade page opens, ticks all three players and assembles the offer.
+
+**Not proven:**
+
+- **The trade SEND button**, the one click past "Continue". Verifying it means
+  sending a real offer, so it needs your word first.
+- **`accept_trade` / `reject_trade`** — no incoming offer has arrived yet.
+- **`set_lineup`** has verified selectors (2026-09-04) but has still not moved a
+  live lineup: every pass since the switch went on has found nothing to change.
 - **Nothing posts to league chat.** There is no tool for it (§8.2).
+
+The first live pass of each is a supervised run: watch #fantasy and the
+screenshot.
 
 ## If something is wrong
 
