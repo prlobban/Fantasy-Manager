@@ -245,10 +245,14 @@ def _row_for_player(page, espn_id: int, name: str | None = None):
 
     The id lives in the headshot URL, which is why the id path works at all —
     and why it CANNOT work for a defence. A D/ST has no headshot and no
-    positive id (the Browns are -16005), so the id scan silently returns None
-    and the caller skips the drop, leaving a disabled Continue and a write
-    that reports success while nothing happened. Name is the fallback, and
-    for a defence it is the only path.
+    positive id (the Browns are -16005), so the id scan returns None, the
+    caller skips the drop, and Continue is clicked while disabled: a write
+    that reports success while the roster never changed.
+
+    The name fallback reads each row's text in PYTHON rather than through
+    Playwright's `has_text=`. That filter takes a regex but hands it to a JS
+    engine, and anything spanning two cells ("Browns" … "D/ST", separated by
+    newlines and tabs) silently matches nothing — verified 2026-09-08.
     """
     rows = page.locator(S.PLAYER_TABLE_ROW)
     n = rows.count()
@@ -258,31 +262,23 @@ def _row_for_player(page, espn_id: int, name: str | None = None):
                 return rows.nth(i)
         except Exception:
             continue
-    if name:
-        for pat in _name_patterns(name):
-            hit = rows.filter(has_text=pat)
-            if hit.count():
-                return hit.first
+    if not name:
+        return None
+    # "Browns D/ST" to us; "D/ST Browns CLE D/ST DROP …" on the page.
+    wanted = [w for w in name.replace("/", " ").split() if w.lower() != "dst"]
+    is_dst = name.upper().endswith("D/ST")
+    for i in range(n):
+        try:
+            text = " ".join(rows.nth(i).inner_text().split())
+        except Exception:
+            continue
+        low = text.lower()
+        if name.lower() in low:
+            return rows.nth(i)
+        if wanted and all(w.lower() in low for w in wanted):
+            if not is_dst or "d/st" in low:
+                return rows.nth(i)
     return None
-
-
-def _name_patterns(name: str) -> list:
-    """Progressively looser ways ESPN might have written this player's name.
-
-    A defence is "Browns D/ST" to us and renders as "D/ST Browns CLE D/ST" —
-    the pro-team abbreviation sits BETWEEN the two halves, so a literal match
-    on our own name never fires. Match the city on a row that also says D/ST.
-    """
-    import re as _re
-
-    pats = [_re.compile(_re.escape(name), _re.I)]
-    if name.upper().endswith("D/ST"):
-        base = name[: -len("D/ST")].strip()
-        if base:
-            # [\s\S], not . — Playwright hands the pattern to a JS regex with
-            # no DOTALL, and a row's text is newline-separated per cell.
-            pats.append(_re.compile(rf"{_re.escape(base)}\b[\s\S]*D/ST", _re.I))
-    return pats
 
 
 # ── waivers / free agents ────────────────────────────────────────────────────
