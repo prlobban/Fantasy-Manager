@@ -55,6 +55,37 @@ countering 🔴 never · league settings / chat 🔴 never.
 
 ## Change log — newest first
 
+**2026-09-11 — two days of sweeps ran without a brain, and the alert never said so.**
+The box's Claude OAuth session expired **2026-09-09** (`~/.claude/.credentials.json`:
+`expiresAt: 0`, refresh token dead; `claude auth status` → `loggedIn: false`). From then on every
+`claude -p` died in ~45ms with exit 1 and an **empty stderr**, while the CLI's own explanation sat
+on stdout inside the JSON envelope: *"Failed to authenticate: OAuth session expired and could not
+be refreshed."* Slack therefore reported `claude exited 1:` twenty-eight times at $0.00 and 0 min,
+and each sweep fell through to `⚠ no research this morning — deciding on projections alone (D3.1)`.
+ESPN health was green throughout and writes stayed live, so `core` kept working; it was the
+judgment layer that was gone.
+
+**Three separate defects made an expired login look like a modelling problem:**
+
+1. **The error string was built from `stderr`**, which `--output-format json` leaves empty.
+   `_cli_message()` now reads the envelope's `result`, and both the exit-code path and the auth
+   path use it.
+2. **An auth failure was not a class**, so the `capacity:` halt in `agent/research.py` and
+   `scripts/research_week.py` never fired and all 28 players were attempted against a dead
+   credential. The prefix is now `auth:` and both passes stop on either.
+3. **`§8.5` never checked the second credential.** It checks ESPN's cookie exhaustively *because
+   "espn_s2 dies without warning"* — the Claude session has exactly that property and had no check
+   at all. `agent.run.auth_status()` asks `claude auth status --json` (free, offline, instant) and
+   `scripts/healthcheck.py` reports it. **Deliberately not wired to the kill switch:** signed out,
+   `core` is still healthy and can still set a lineup on its own arithmetic, and disarming writes
+   would take that away too.
+
+Also: `scripts/cron_manage.sh` puts the failing log lines in the Slack alert instead of
+"see data/manager.log on the box". An alert that fires correctly and names nothing is an outage.
+
+**The remaining fix is a human one:** `claude auth login` on the box. Nothing in the repo can
+renew it.
+
 **2026-09-08 — the first live sweep wrote nothing, and the gates were not why.**
 Tuesday's 07:30 sweep decided three writes — stream the Jaguars D/ST over the Browns, add
 Jordan Mason over Travis Kelce, offer Herbert + Pitts to GLOBO GYM for Garrett Wilson — and
@@ -149,8 +180,13 @@ built, nothing installed. Reasoning: `2026-season/2026-09-03-system-design.md`.
   different layout without a real user agent.
 - ⚠️ **`§6.8` has never run.** The first incoming offer of the season is the live test of a
   thirteen-gate rule set written in one sitting. Read its log output carefully.
-- ⚠️ **No Claude auth minted for the box** — but the support agent and Daily Doc already run
-  unattended `claude -p` there. Reuse that path; **verify rather than assume.**
+- 🔴 **The box's Claude login expires, and when it does the agent layer is simply gone.** It went on
+  2026-09-09 and cost two days (change log, 09-11). `scripts/healthcheck.py` now names it in one
+  line; the renewal — `claude auth login` on the box — is manual and nothing here can automate it.
+  **The support agent and the Daily Doc share that credential**, so the check is not fantasy's
+  alone.
+⚠️ **The rest of this list is pre-draft and stale** — it was written 2026-09-03 and has not been
+  revised since the draft happened on 09-05. Read it as history until someone rewrites it.
 - ⚠️ **The box's copy of anything is independent of the laptop's.** That drift has bitten before on
   this hardware.
 - ⚠️ **Every `[v1 prior]` is unvalidated.** `§7` is the mechanism; it hasn't run.
