@@ -128,9 +128,11 @@ def main(argv: list[str] | None = None) -> int:
                 st_.failed += 1
                 st_.errors.append(f"{pl.name}: {res.error}")
                 log.warning("%-24s FAILED: %s", pl.name, res.error)
-                if res.error and res.error.startswith("capacity:") and not halted:
+                if res.error and res.error.startswith(("capacity:", "auth:")) and not halted:
                     halted = True
-                    log.error("rate limited — stopping the pass. Re-run to resume.")
+                    log.error("%s — stopping the pass. Re-run to resume.",
+                              "not authenticated" if res.error.startswith("auth:")
+                              else "rate limited")
                     for f in futures:
                         f.cancel()
 

@@ -387,9 +387,27 @@ def run(task: str, packet: dict, *, dry_run: bool = False,
                                error=f"capacity: {marker}", transcript=transcript,
                                usage=usage)
 
+    # Auth is its own class of failure and must carry its own prefix. The box's
+    # OAuth session expired 2026-09-09 and every run since died in 45ms with
+    # "Failed to authenticate: OAuth session expired and could not be
+    # refreshed" -- on STDOUT, exit 1, empty stderr. It read as 28 identical
+    # per-player failures, because nothing told the pass to stop and the one
+    # sentence naming the cause only ever reached a transcript.
+    # Narrow markers on purpose: a bare "oauth" would fire on a researcher that
+    # happened to quote the word.
+    for marker in ("failed to authenticate", "oauth session expired",
+                   "invalid api key", "authentication_error", "please run /login"):
+        if marker in lowered:
+            return AgentResult(False, task, None, raw,
+                               error=f"auth: {_cli_message(raw) or marker}",
+                               transcript=transcript, usage=usage)
+
     if proc.returncode != 0:
+        # stderr is routinely empty under --output-format json; the CLI reports
+        # its own failure in the envelope's "result". Prefer whichever exists.
+        detail = (stderr or "").strip() or _cli_message(raw) or "(no stderr; see transcript)"
         return AgentResult(False, task, None, raw,
-                           error=f"claude exited {proc.returncode}: {(stderr or '')[:300]}",
+                           error=f"claude exited {proc.returncode}: {detail[:300]}",
                            transcript=transcript, usage=usage)
 
     payload = _extract(raw)
@@ -405,6 +423,52 @@ def run(task: str, packet: dict, *, dry_run: bool = False,
                            transcript=transcript, usage=usage)
 
     return AgentResult(True, task, payload, raw, transcript=transcript, usage=usage)
+
+
+def auth_status() -> tuple[bool, str]:
+    """Is the box's `claude` CLI actually logged in? §8.5 pre-flight.
+
+    The ESPN health check exists because "espn_s2 dies without warning" -- the
+    Claude session is the second credential with exactly that property, and it
+    had no check at all. It expired 2026-09-09 and the manager spent two days
+    posting per-player failures for a login.
+
+    `claude auth status --json` is free, offline and instant, and it exits 0
+    whether or not you are signed in, so the flag is what matters, not the
+    exit code.
+    """
+    cmd = [settings().claude_bin, "auth", "status", "--json"]
+    try:
+        proc = subprocess.run(cmd, capture_output=True, text=True,
+                              encoding="utf-8", timeout=30, env=_child_env())
+    except (OSError, subprocess.SubprocessError) as e:
+        return False, f"could not run {cmd[0]!r}: {e}"
+    try:
+        st = json.loads(proc.stdout or "{}")
+    except (json.JSONDecodeError, ValueError):
+        return False, f"unreadable auth status: {(proc.stdout or proc.stderr or '')[:160]}"
+    if not st.get("loggedIn"):
+        return False, ("claude is NOT logged in on this host — run `claude auth login`. "
+                       "Until then every agent task fails instantly at $0.00.")
+    who = st.get("email") or "unknown account"
+    return True, f"{who} · {st.get('authMethod')} · {st.get('subscriptionType')}"
+
+
+def _cli_message(raw: str) -> str | None:
+    """The CLI envelope's own error sentence, if it wrote one.
+
+    `claude -p --output-format json` reports its failures as
+    {"is_error": true, "result": "<why>"} on STDOUT and leaves stderr empty,
+    so an error string built from stderr alone says nothing at all.
+    """
+    try:
+        outer = json.loads(raw)
+    except (json.JSONDecodeError, TypeError, ValueError):
+        return None
+    if not isinstance(outer, dict):
+        return None
+    msg = outer.get("result")
+    return msg.strip() if isinstance(msg, str) and msg.strip() else None
 
 
 def _child_env() -> dict[str, str]:

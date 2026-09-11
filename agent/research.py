@@ -185,11 +185,13 @@ def run_pool(players: list[tuple], *, workers: int | None = None,
                 st.failed += 1
                 st.errors.append(f"{pl.name}: {res.error}")
                 log.warning("%-24s FAILED: %s", pl.name, res.error)
-                if res.error and res.error.startswith("capacity:") and not halted:
+                if res.error and res.error.startswith(("capacity:", "auth:")) and not halted:
                     # §10.5 — the plan's limit, not ours. Stop taking new work;
                     # the pass resumes from disk on the next run.
                     halted = True
-                    log.error("rate limited — stopping the pass. Re-run to resume.")
+                    log.error("%s — stopping the pass. Re-run to resume.",
+                              "not authenticated" if res.error.startswith("auth:")
+                              else "rate limited")
                     for f in futures:
                         f.cancel()
 

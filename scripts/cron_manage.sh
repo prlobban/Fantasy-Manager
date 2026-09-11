@@ -30,10 +30,16 @@ esac
 RC=$?
 if [ "$RC" -ne 0 ] || tail -60 "$LOG" | grep -qiE 'session limit|usage limit|rate limit|overloaded|credit balance'; then
   echo "$(date -Is) ⚠️ $TASK FAILED (rc=$RC)" >> "$LOG"
+  # Carry the reason, not a pointer. "see data/manager.log on the box" is what
+  # an expired login looked like for two days: an alert that fires correctly
+  # and says nothing you can act on.
+  WHY="$(grep -iE 'AGENT FAILED|FAILED:|auth:|capacity:|Traceback|Error' "$LOG" | tail -5)"
+  WHY="${WHY:-see data/manager.log on the box}" \
   $PY - <<'PY' >> "$LOG" 2>&1 || true
+import os
 from core.notify import notify
-import sys
-notify("error", "Fantasy manager: cron task failed", "see data/manager.log on the box")
+notify("error", "Fantasy manager: cron task failed",
+       os.environ.get("WHY", "see data/manager.log on the box"))
 PY
 fi
 echo "$(date -Is) done $TASK (rc=$RC)" >> "$LOG"
