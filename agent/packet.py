@@ -346,6 +346,10 @@ def build(task: str, state: ls_mod.LeagueState | None = None,
             current_week=st.week,
             adds_left=rate_limits.adds_left(),
             ros_valuations=ros_vals,
+            # §4.8 — without this the packet prices adds into slots ESPN has
+            # already locked. 2026-09-12: the agent was shown "+9.02/wk" for a
+            # kicker whose target slot was frozen, and spent an add on it.
+            current_slots=me.slots,
         )
 
         def _cand(c):

@@ -558,6 +558,28 @@ def set_lineup(moves: list[dict], reason: str, cites: list[str]) -> str:
     justify it, e.g. ["§4.1"] or ["§4.2"].
     """
     s = _snap(refresh=True)  # §8.3 — never act on a stale read
+
+    # §4.8 — a player whose game has kicked off cannot be moved. ESPN renders
+    # his row as LOCKED, so the click has nowhere to land and the write burns a
+    # browser session to apply 0 of N moves. Enforced HERE, in code, because
+    # core's own plan already pins him: the only way a locked move reaches this
+    # tool is the agent constructing one by hand, and a rule the agent has to
+    # remember is not a rule (2026-09-12).
+    by_id = {p.espn_id: p for p in s.me.roster}
+    frozen = [
+        int(m["espn_id"]) for m in moves
+        if (pl := by_id.get(int(m["espn_id"]))) is not None and pl.game_locked(s.week)
+    ]
+    if frozen:
+        names = ", ".join(by_id[i].name for i in frozen)
+        moves = [m for m in moves if int(m["espn_id"]) not in set(frozen)]
+        if not moves:
+            return _ok(
+                allowed=False, refused_by="§4.8",
+                reason=f"{names}: game already started, so ESPN has him locked "
+                       "in his slot for this week. Nothing was attempted.",
+            )
+
     action = Action(
         kind=ActionKind.SET_LINEUP,
         args={"moves": moves}, cites=cites, reason=reason,
@@ -597,7 +619,8 @@ def set_lineup(moves: list[dict], reason: str, cites: list[str]) -> str:
     return _ok(allowed=gate.allowed, refused_by=gate.refused_by,
                reason=gate.reason, error=err,
                receipt=str(receipt) if receipt else None,
-               verified=landed, slots_after=applied)
+               verified=landed, slots_after=applied,
+               skipped_locked=[by_id[i].name for i in frozen] or None)
 
 
 @mcp.tool()
