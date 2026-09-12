@@ -17,9 +17,10 @@ which is why this module deliberately sends no stat filter.
 from __future__ import annotations
 
 import logging
+from datetime import UTC, datetime
 
 from core.espn.client import EspnClient, client
-from core.model.schema import InjuryStatus, Player, Pos
+from core.model.schema import InjuryStatus, Player, Pos, ProGame
 
 log = logging.getLogger(__name__)
 
@@ -186,6 +187,70 @@ def load_byes(c: EspnClient | None = None) -> dict[str, int]:
         for t in teams
         if t.get("abbrev") and t.get("byeWeek")
     }
+
+
+def load_pro_games(c: EspnClient | None = None) -> dict[str, dict[int, ProGame]]:
+    """Every pro team's schedule: {TEAM: {week: ProGame}}.
+
+    Same seasons endpoint as the byes — one payload carries both, but they are
+    fetched separately so a schedule failure cannot take byes down with it.
+
+    `statsOfficial` is ESPN's own "this box score is final". Combined with the
+    kickoff timestamp it is what tells a settled slot from a live one.
+    """
+    import httpx
+
+    c = c or client()
+    url = f"https://lm-api-reads.fantasy.espn.com/apis/v3/games/ffl/seasons/{c.cfg.season}"
+    try:
+        r = httpx.get(
+            url,
+            params={"view": "proTeamSchedules_wl"},
+            cookies={"SWID": c.cfg.swid, "espn_s2": c.cfg.espn_s2},
+            headers={"User-Agent": "Mozilla/5.0"},
+            timeout=20,
+        )
+        r.raise_for_status()
+        teams = r.json().get("settings", {}).get("proTeams", [])
+    except Exception as e:
+        # Non-fatal, and the consequence is explicit: game_locked fails open,
+        # so we are back to the pre-2026-09-12 behaviour rather than frozen.
+        log.warning("could not load pro schedules — lock detection is OFF: %s", e)
+        return {}
+
+    out: dict[str, dict[int, ProGame]] = {}
+    for t in teams:
+        abbrev = (t.get("abbrev") or "").upper()
+        if not abbrev:
+            continue
+        weeks: dict[int, ProGame] = {}
+        for wk, games in (t.get("proGamesByScoringPeriod") or {}).items():
+            if not games:
+                continue
+            g = games[0]
+            date = g.get("date")
+            if not date:
+                continue
+            weeks[int(wk)] = ProGame(
+                week=int(wk),
+                kickoff=datetime.fromtimestamp(int(date) / 1000, UTC),
+                stats_official=bool(g.get("statsOfficial")),
+            )
+        out[abbrev] = weeks
+    return out
+
+
+def attach_games(players: list[Player], c: EspnClient | None = None) -> int:
+    """Fill `games` in place. Returns how many players were resolved."""
+    sched = load_pro_games(c)
+    if not sched:
+        return 0
+    n = 0
+    for p in players:
+        if (weeks := sched.get(p.pro_team.upper())) is not None:
+            p.games = weeks
+            n += 1
+    return n
 
 
 def attach_byes(players: list[Player], c: EspnClient | None = None) -> int:

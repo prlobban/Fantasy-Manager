@@ -198,6 +198,7 @@ def get_waiver_plan() -> str:
         current_week=s.week,
         adds_left=rate_limits.adds_left(),
         ros_valuations=ros,
+        current_slots=s.me.slots,
     )
 
     from core.manager import research as R

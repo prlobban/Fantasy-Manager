@@ -146,11 +146,18 @@ def _min_gain_for_priority(priority: int | None) -> tuple[float, str]:
 
 
 def _starters(roster: list[Player], valuations: dict[int, Valuation],
-              settings: LeagueSettings) -> dict[int, float]:
-    """espn_id -> points, for everyone in the ONE optimal lineup."""
+              settings: LeagueSettings,
+              locked_slots: dict[int, str] | None = None) -> dict[int, float]:
+    """espn_id -> points, for everyone in the ONE optimal lineup.
+
+    §4.8 — `locked_slots` pins the players whose games have already kicked off.
+    Without it the gain from an add is computed against a lineup we are not
+    allowed to field: on 2026-09-12 that priced a kicker add at +8.2/wk when
+    the K slot was already settled and the add could not have scored a point.
+    """
     from core.manager.lineup import optimal_lineup
 
-    plan = optimal_lineup(roster, valuations, settings)
+    plan = optimal_lineup(roster, valuations, settings, locked_slots=locked_slots)
     return {a.player.espn_id: a.points for a in plan.assignments if a.player is not None}
 
 
@@ -160,6 +167,7 @@ def weekly_gain_for(
     roster: list[Player],
     valuations: dict[int, Valuation],
     settings: LeagueSettings,
+    locked_slots: dict[int, str] | None = None,
 ) -> tuple[float, Player | None]:
     """§5.2 — improvement to the STARTING lineup, not to the roster.
 
@@ -167,11 +175,20 @@ def weekly_gain_for(
     the gain is the difference. That is exact for the flex, which the old
     per-slot comparison got wrong.
     """
-    before = _starters(roster, valuations, settings)
+    # §4.8 — a candidate whose own game has already kicked off cannot be
+    # started this week: ESPN locks him the moment his game begins, so his
+    # points are unreachable no matter how good they look. Adding him is a
+    # rest-of-season decision, never a weekly gain. (2026-09-12: with the
+    # kicker phantom fixed, the same bug reappeared as a +4.25/wk claim on
+    # Brock Purdy, whose game had finished 27-7 the night before.)
+    if cand_val.locked:
+        return 0.0, None
+
+    before = _starters(roster, valuations, settings, locked_slots)
     trial = list(roster) + [cand]
     trial_vals = dict(valuations)
     trial_vals[cand.espn_id] = cand_val
-    after = _starters(trial, trial_vals, settings)
+    after = _starters(trial, trial_vals, settings, locked_slots)
     if cand.espn_id not in after:
         return 0.0, None
     gain = sum(after.values()) - sum(before.values())
@@ -200,6 +217,7 @@ def choose_drop(
     current_week: int = 1,
     bench_open: int = 0,
     ros_valuations: dict[int, Valuation] | None = None,
+    locked_slots: dict[int, str] | None = None,
 ) -> tuple[Player | None, float, str, bool]:
     """§5.5 / D5.2 / D4.5 — who we can afford to cut, what it costs, and
     whether he is worth trading first.
@@ -215,7 +233,7 @@ def choose_drop(
     ros = ros_valuations or valuations
 
     protected = protected_ids(roster, ros)
-    starters = _starters(roster, valuations, settings)
+    starters = _starters(roster, valuations, settings, locked_slots)
 
     droppable: list[tuple[int, float, Player]] = []
     held: list[str] = []
@@ -315,6 +333,7 @@ def build(
     max_claims: int | None = None,
     adds_left: int | None = None,
     ros_valuations: dict[int, Valuation] | None = None,
+    current_slots: dict[int, str] | None = None,
 ) -> WaiverPlan:
     """The whole §5 read: every candidate scored, every rule stated.
 
@@ -340,6 +359,15 @@ def build(
         max_claims = min(max_claims, adds_left)
     ros = ros_valuations or valuations
 
+    # §4.8 — the players the clock has already settled. Everything that costs
+    # or gains starting points has to be computed against a lineup we can
+    # actually field, not the one we could have fielded on Thursday.
+    locked_slots = {
+        p.espn_id: (current_slots or {}).get(p.espn_id, "BE")
+        for p in roster
+        if p.espn_id in valuations and valuations[p.espn_id].locked
+    }
+
     our_rb1 = max(
         (x for x in roster if x.pos is Pos.RB and x.espn_id in valuations),
         key=lambda x: valuations[x.espn_id].vor,
@@ -349,6 +377,7 @@ def build(
     drop, drop_cost, drop_reason, tradeable = choose_drop(
         roster, valuations, settings, current_week=current_week,
         bench_open=bench_open, ros_valuations=ros_valuations,
+        locked_slots=locked_slots,
     )
 
     cands: list[Candidate] = []
@@ -356,7 +385,8 @@ def build(
         v = valuations.get(fa.espn_id)
         if v is None or v.vetoed:
             continue
-        gain, replaces = weekly_gain_for(fa, v, roster, valuations, settings)
+        gain, replaces = weekly_gain_for(fa, v, roster, valuations, settings,
+                                         locked_slots)
         # D6.1 — a streamed position replaces its own incumbent (see drop_for).
         # That drop happens whether or not a bench spot is open: two defences
         # is never the answer.

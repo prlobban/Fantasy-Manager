@@ -14,7 +14,7 @@ from datetime import UTC, datetime
 from core.espn import players as players_mod
 from core.espn.client import EspnClient, client
 from core.espn.settings import SLOT_MAP, LeagueFacts
-from core.model.schema import Player
+from core.model.schema import Player, ProGame
 
 log = logging.getLogger(__name__)
 
@@ -101,6 +101,9 @@ def snapshot(
 
     raw = c.get_view(["mRoster", "mTeam", "mMatchup", "mSettings"])
     byes = players_mod.load_byes(c)
+    # Without this every projection reads as live and every player as
+    # movable, whatever the clock says — see Player.game_locked.
+    pro_games = players_mod.load_pro_games(c)
 
     teams: dict[int, TeamState] = {}
     for t in raw.get("teams", []):
@@ -122,6 +125,7 @@ def snapshot(
             if pl is None:
                 continue
             pl.bye_week = byes.get(pl.pro_team.upper())
+            pl.games = pro_games.get(pl.pro_team.upper(), {})
             ts.roster.append(pl)
             ts.slots[pl.espn_id] = _slot_name(int(entry.get("lineupSlotId", BENCH_SLOT)))
         teams[tid] = ts
@@ -129,7 +133,7 @@ def snapshot(
     my_id = c.my_team_id
     opponent = _find_opponent(raw, my_id, wk)
 
-    fa, on_waivers = _free_agents(c, free_agent_size, byes)
+    fa, on_waivers = _free_agents(c, free_agent_size, byes, pro_games)
 
     log.info(
         "snapshot: week %s, %d teams, %d free agents, %d on waivers",
@@ -161,7 +165,8 @@ def _find_opponent(raw: dict, my_id: int, week: int) -> int | None:
 
 
 def _free_agents(
-    c: EspnClient, size: int, byes: dict[str, int]
+    c: EspnClient, size: int, byes: dict[str, int],
+    pro_games: dict[str, dict[int, ProGame]] | None = None,
 ) -> tuple[list[Player], set[int]]:
     """Unrostered players, and which of them still cost a waiver claim.
 
@@ -184,6 +189,7 @@ def _free_agents(
         if pl is None:
             continue
         pl.bye_week = byes.get(pl.pro_team.upper())
+        pl.games = (pro_games or {}).get(pl.pro_team.upper(), {})
         out.append(pl)
         if str(entry.get("status", "")).upper() == "WAIVERS":
             on_waivers.add(pl.espn_id)

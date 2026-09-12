@@ -6,7 +6,7 @@ Pydantic so the agent's JSON and core's objects validate against one definition.
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import UTC, datetime
 from enum import Enum
 from typing import Literal
 
@@ -130,6 +130,26 @@ class InjuryStatus(str, Enum):
         }
 
 
+class ProGame(BaseModel):
+    """One NFL game, as the pro-team schedule reports it.
+
+    🔴 The system had no concept of a game having started. Every projection was
+    treated as live, so on 2026-09-12 core priced a kicker whose game was
+    already final (Rams 7, 49ers 27, played Thursday) at his pre-game 8.0 and
+    built a waiver add on the "gain". The agent declined it twice on judgment;
+    nothing in code disagreed with the recommendation.
+
+    It matters more than one stale number: **ESPN locks a player once his game
+    kicks off.** A lineup pass that runs Sunday afternoon cannot move him, and
+    asking it to is a write that fails at the browser.
+    """
+
+    week: int
+    kickoff: datetime
+    #: ESPN's own flag that the box score is final and official.
+    stats_official: bool = False
+
+
 class Player(BaseModel):
     espn_id: int
     name: str
@@ -152,6 +172,28 @@ class Player(BaseModel):
 
     #: Roster ownership: None = free agent, else the espn team id.
     on_team_id: int | None = None
+
+    #: This player's pro-team schedule, by week. Empty when it could not be
+    #: loaded — see `game_locked`, which fails OPEN in that case.
+    games: dict[int, ProGame] = Field(default_factory=dict)
+
+    def game_locked(self, week: int, now: datetime | None = None) -> bool:
+        """Has his week-`week` game already kicked off (or finished)?
+
+        A locked player's slot is settled: his points are banked, ESPN will not
+        let him be moved, and no add can improve that slot this week.
+
+        Fails OPEN — unknown schedule returns False, i.e. "assume still to come".
+        That keeps behaviour identical wherever the schedule could not be
+        loaded, at the cost of the protection. The alternative, treating every
+        unknown as locked, would freeze a whole lineup on one failed HTTP call.
+        """
+        g = self.games.get(week)
+        if g is None:
+            return False
+        if g.stats_official:
+            return True
+        return (now or datetime.now(UTC)) >= g.kickoff
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -178,6 +220,10 @@ class Valuation(BaseModel):
     tier: int
     #: Expected games played / 17, in (0, 1]. §2.5.
     availability: float
+    #: Whether this player's game for the valued week has already started.
+    #: Weekly points are then his ACTUAL score, not a projection, and no
+    #: lineup or waiver move can change what that slot produces.
+    locked: bool = False
     #: Stdev of weekly scores, and share of weeks under 50% of projection. §2.6.
     stdev: float | None = None
     bust_rate: float | None = None

@@ -70,10 +70,17 @@ def value_one(
     if window == "week":
         if week is None:
             raise ValueError("window='week' requires a week number")
-        base = player.proj_week.get(week)
-        if base is None:
-            base = 0.0
-            missing.append(f"no ESPN projection for week {week}")
+        if player.game_locked(week):
+            # His game has kicked off, so the projection forecasts an event
+            # that already happened. What this slot produces is settled and no
+            # move can change it (§2.1) — use the real number.
+            base = player.actual_week.get(week, 0.0)
+            components["locked_actual"] = round(base, 3)
+        else:
+            base = player.proj_week.get(week)
+            if base is None:
+                base = 0.0
+                missing.append(f"no ESPN projection for week {week}")
     else:
         base = player.proj_season
         if not base:
@@ -186,6 +193,8 @@ def value_pool(
             vor=round(vors.get(p.espn_id, 0.0), 3),
             tier=tiers.get(p.espn_id, 99),
             availability=dur.availability,
+            locked=bool(window == "week" and week is not None
+                        and p.game_locked(week)),
             stdev=var.stdev,
             bust_rate=var.bust_rate,
             components=comps,

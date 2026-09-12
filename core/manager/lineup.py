@@ -95,6 +95,7 @@ def optimal_lineup(
     *,
     week: int | None = None,
     ros_valuations: dict[int, Valuation] | None = None,
+    locked_slots: dict[int, str] | None = None,
 ) -> LineupPlan:
     """Maximise projected points across legal slots — with two rules a human
     manager applies before the arithmetic (Pearce, 2026-09-06):
@@ -132,6 +133,20 @@ def optimal_lineup(
         for p in roster
         if p.espn_id in valuations and _startable(p, valuations[p.espn_id])
     }
+
+    # §4.8 — a player whose game has kicked off is FIXED. ESPN will not move
+    # him (his row reads LOCKED, not MOVE), his points are already banked, and
+    # an optimiser that plans around him produces writes that fail at the
+    # browser. He holds whatever slot he is in; he is not a candidate for any
+    # other. Locked players on the bench stay on the bench.
+    locked = {
+        pid: slot for pid, slot in (locked_slots or {}).items() if pid in by_id
+    }
+    available -= set(locked)
+    pinned: dict[str, list[int]] = {}
+    for pid, slot in locked.items():
+        if slot and slot not in ("BE", "IR"):
+            pinned.setdefault(slot, []).append(pid)
     prefer = _flex_preferred(settings)
     p = priors()
     stud_margin = float(p.get("lineup.stud_bench_margin"))
@@ -141,6 +156,11 @@ def optimal_lineup(
     for s in settings.starting_slots:
         slots.extend([(s.name, s.eligible)] * s.count)
     slots.sort(key=lambda s: len(s[1]))  # most constrained first
+
+    def _take_pinned(name: str) -> int | None:
+        """The locked player already sitting in this slot, if any."""
+        ids = pinned.get(name)
+        return ids.pop(0) if ids else None
 
     def _pick(eligible: tuple[Pos, ...]) -> int | None:
         best_id, best_pts = None, float("-inf")
@@ -172,6 +192,12 @@ def optimal_lineup(
 
     assignments: list[SlotAssignment] = []
     for name, eligible in slots:
+        held = _take_pinned(name)
+        if held is not None:
+            assignments.append(
+                SlotAssignment(name, by_id[held], valuations.get(held))
+            )
+            continue
         is_flex = len(eligible) > 1
         best_id = None
         if is_flex and prefer:
@@ -311,8 +337,17 @@ def build(
     ros_valuations: dict[int, Valuation] | None = None,
 ) -> LineupPlan:
     """The whole §4 decision, start to finish."""
+    # §4.8 — which players the clock has already settled. `current_starters`
+    # gives the slot for those in the lineup; a locked player who is not in it
+    # is benched and simply unavailable.
+    locked_slots = {
+        p.espn_id: (current_starters or {}).get(p.espn_id, "BE")
+        for p in roster
+        if p.espn_id in valuations and valuations[p.espn_id].locked
+    }
     plan = optimal_lineup(roster, valuations, settings, week=week,
-                          ros_valuations=ros_valuations)
+                          ros_valuations=ros_valuations,
+                          locked_slots=locked_slots)
     plan = apply_variance_preference(
         plan, roster, valuations, settings, opponent_projected
     )
