@@ -55,6 +55,46 @@ countering 🔴 never · league settings / chat 🔴 never.
 
 ## Change log — newest first
 
+**2026-09-12 (15:00) — §4.8: the system learned that a game has a clock. Live and pushed.**
+Nothing in the codebase knew a game had started. Every projection read as live and every player as
+movable. Three wrong answers came out of that one gap, and the third would have cost points tomorrow.
+
+- **Stale projections.** Mevis was carried at his pre-game 9.4 while his game was final and he had
+  actually scored 1.0 — and core built a waiver add on the "gain". Fixed: a locked player's weekly
+  points are his ACTUAL score (§2.1).
+- **The phantom moved when squeezed.** With the kicker fixed, the same bug reappeared as a +4.25/wk
+  claim on Brock Purdy, whose game had also finished. A player whose game is over cannot be added
+  *and started*. His weekly gain is now zero by rule.
+- 🔴 **The one that mattered: ESPN locks a player at kickoff.** His row reads LOCKED, not MOVE. The
+  **Sunday 15:00 and 19:00 lineup passes run after kickoff**, so the optimiser would have planned
+  moves the browser cannot make. §4.8 pins locked players in the optimiser, and `set_lineup` refuses
+  impossible moves in code before opening a browser — **both** the locked player and any slot whose
+  every instance is held by one.
+
+**`ProGame`** comes off the pro-team schedule ESPN already serves (`statsOfficial` + kickoff time).
+**`game_locked` fails OPEN:** no schedule data restores the old behaviour rather than freezing a
+lineup on one failed HTTP call.
+
+**Two gaps a live sweep found that no unit test would have.** The agent reads `agent/packet.py`, not
+`get_waiver_plan` — the packet was unwired, so the agent was still shown "+9.02/wk" for a kicker
+whose slot was frozen and **spent one of the week's three adds on it**. And `set_lineup` accepted an
+agent-built move on a locked player. Both closed. ⚠️ The cost is real and stands: that add is spent,
+and we now carry two kickers (Mevis locked in the K slot, Boswell on the bench). Next sweep resolves
+it.
+
+**Proven, not asserted.** Four live sweeps end to end. The final post-kickoff `lineup` run — the
+exact path that fires at 15:00 and 19:00 tomorrow — decided **zero actions, opened no browser, and
+refused the impossible move in code.** A legal flex move still applies and verifies against the read
+API. **365 tests** (36 new, each pinned to a specific wrong answer; the lineup and waiver ones were
+checked to fail without the fix), ruff clean, health **6/6**.
+
+**Deployed:** `ea7f4b2` on the box, the laptop clone, and GitHub. ⚠️ **The box cannot push** — no
+GitHub credentials there; `git fetch` works, so it can pull. Anything committed on the box has to be
+pushed from the laptop.
+
+**Roster now:** Browns D/ST dropped (the duplicate defence is resolved), Garrett Wilson in the flex,
+Jaguars D/ST starting. **Adds: 2 of 3 spent this week, 1 left.**
+
 **2026-09-12 (13:51) — the first sweep on the repaired write path, and it found the next bug.**
 Ran the real cron path (`cron_manage.sh sweep`) with `ENABLED=on`. Clean: rc=0, no
 `Error executing tool`, no writes needed because the lineup was already correct. The agent then
