@@ -37,7 +37,14 @@ from dataclasses import dataclass, field
 
 from core.manager import roster as roster_mod
 from core.model.priors import priors
-from core.model.schema import InjuryStatus, LeagueSettings, Player, Pos, Valuation
+from core.model.schema import (
+    STREAMED_POSITIONS,
+    InjuryStatus,
+    LeagueSettings,
+    Player,
+    Pos,
+    Valuation,
+)
 
 log = logging.getLogger(__name__)
 
@@ -255,8 +262,9 @@ def choose_drop(
     return pl, cost, reason, tradeable
 
 
-#: Positions that are streamed weekly (D6.1) — one body, replaced not stacked.
-_STREAMED = (Pos.K, Pos.DST)
+#: Positions that are streamed weekly (D6.1). Defined in core.model.schema so
+#: the lineup optimiser reasons off the same list — §4.7 has to exempt these.
+_STREAMED = STREAMED_POSITIONS
 
 
 def drop_for(

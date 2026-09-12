@@ -17,7 +17,13 @@ import logging
 from dataclasses import dataclass, field
 
 from core.model.priors import priors
-from core.model.schema import LeagueSettings, Player, Pos, Valuation
+from core.model.schema import (
+    STREAMED_POSITIONS,
+    LeagueSettings,
+    Player,
+    Pos,
+    Valuation,
+)
 
 log = logging.getLogger(__name__)
 
@@ -106,6 +112,15 @@ def optimal_lineup(
     ROS number is the one with signal. Needs `ros_valuations`; without them
     the rule cannot fire.
 
+    🔴 **§4.7 does not apply at a streamed position** (D6.1: K, D/ST). Found by
+    the agent on 2026-09-12, which refused core's own plan: it had the Browns
+    D/ST (4.9 weekly) starting over the Jaguars (9.4) because the Browns are
+    ~25 ROS VOR better and the weekly gap was inside the 8.0 margin. That is
+    §4.7 working exactly as written and being wrong, because we do not keep a
+    streamed defence past Sunday — its ROS number describes a player we will
+    have dropped. At these positions the weekly window is the only window
+    (§2.1), so the arithmetic stands unmodified.
+
     Greedy by scarcity: fill the most constrained slots (single-position) before
     flex. With this many slots and players an exact assignment would also be
     cheap, but scarcity-first is easier to explain in a log and gives the same
@@ -136,6 +151,11 @@ def optimal_lineup(
             if pts > best_pts:
                 best_id, best_pts = pid, pts
         if best_id is None or not ros_valuations:
+            return best_id
+        # §4.7 is a STUD rule and a streamer is not a stud: at K and D/ST the
+        # ROS number describes someone we intend to drop, so it cannot outvote
+        # this week's points.
+        if all(pos in STREAMED_POSITIONS for pos in eligible):
             return best_id
         # §4.7 — a much better ROS player inside the weekly margin starts.
         best_ros = ros_valuations.get(best_id)

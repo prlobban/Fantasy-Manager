@@ -26,6 +26,14 @@ class Pos(str, Enum):
     DST = "D/ST"
 
 
+#: D6.1 — the positions that are STREAMED weekly: one body, replaced rather
+#: than stacked, chosen on this week's matchup off the wire. Their
+#: rest-of-season value carries no signal, because we do not intend to keep
+#: whoever is there past Sunday. Anything that reasons about ROS worth has to
+#: ask whether the position is on this list first (§2.1).
+STREAMED_POSITIONS = (Pos.K, Pos.DST)
+
+
 #: Slots that a FLEX-type roster spot can accept, keyed by the ESPN slot name.
 FLEX_ELIGIBLE: dict[str, tuple[Pos, ...]] = {
     "RB/WR/TE": (Pos.RB, Pos.WR, Pos.TE),

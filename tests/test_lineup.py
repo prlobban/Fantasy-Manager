@@ -229,3 +229,59 @@ def test_a_stud_is_benched_when_the_weekly_gap_is_large_or_he_cannot_play():
     wk = value_pool(roster, s, window="week", week=9)
     plan = lineup.build(roster, wk, s, week=9, ros_valuations=ros)
     assert next(a for a in plan.assignments if a.slot == "QB").player.name == "Herbert"
+
+
+def settings_with_dst() -> LeagueSettings:
+    s = settings_10()
+    s.starting_slots = [
+        *s.starting_slots,
+        RosterSlot(name="D/ST", count=1, eligible=(Pos.DST,)),
+    ]
+    return s
+
+
+def test_stream_rule_beats_the_stud_rule_at_a_streamed_position():
+    """🔴 2026-09-12: core wanted the Browns D/ST (4.9 weekly) starting over the
+    Jaguars (9.4) because the Browns were ~25 ROS VOR better and the weekly gap
+    fell inside the 8.0 stud margin. §4.7 is a stud rule and a streamer is not a
+    stud — at K and D/ST we drop whoever is there on Monday, so the ROS number
+    describes a player we will not have. The agent refused the plan; the code
+    now agrees.
+    """
+    s = settings_with_dst()
+    jax = pl(20, Pos.DST, 9.4, name="Jaguars D/ST")
+    cle = pl(21, Pos.DST, 4.9, name="Browns D/ST")
+    roster = [
+        pl(1, Pos.QB, 20), pl(3, Pos.RB, 18), pl(4, Pos.RB, 14),
+        pl(6, Pos.WR, 17), pl(7, Pos.WR, 13), pl(9, Pos.TE, 11),
+        jax, cle,
+    ]
+    wk = value_pool(roster, s, window="week", week=1)
+    # Cleveland is the far better rest-of-season unit; Jacksonville is a rental.
+    jax.proj_season, cle.proj_season = 72.2, 197.6
+    ros = value_pool(roster, s, window="ros", weeks_remaining=13, current_week=1)
+
+    plan = lineup.build(roster, wk, s, week=1, ros_valuations=ros)
+
+    dst = next(a for a in plan.assignments if a.slot == "D/ST")
+    assert dst.player.name == "Jaguars D/ST", (
+        "a streamed position is decided on THIS WEEK's points (§2.1/D6.1); "
+        "§4.7 must not start a defence we intend to drop"
+    )
+
+
+def test_the_stud_rule_still_applies_at_a_kept_position():
+    """The exemption is narrow: it must not defang §4.7 everywhere else."""
+    s = settings_with_dst()
+    allen = pl(1, Pos.QB, 18.6, name="Allen")
+    herbert = pl(2, Pos.QB, 19.5, name="Herbert")
+    roster = [allen, herbert, pl(3, Pos.RB, 18), pl(4, Pos.RB, 14),
+              pl(6, Pos.WR, 17), pl(7, Pos.WR, 13), pl(9, Pos.TE, 11),
+              pl(20, Pos.DST, 9.0)]
+    wk = value_pool(roster, s, window="week", week=9)
+    allen.proj_season, herbert.proj_season = 380.0, 250.0
+    ros = value_pool(roster, s, window="ros", weeks_remaining=8, current_week=9)
+
+    plan = lineup.build(roster, wk, s, week=9, ros_valuations=ros)
+
+    assert next(a for a in plan.assignments if a.slot == "QB").player.name == "Allen"
