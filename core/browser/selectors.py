@@ -117,8 +117,62 @@ QUEUE_AUTOPICK_TOGGLE = ".autoPick-toggle input[type=checkbox]"
 
 # ── team / roster pages ──────────────────────────────────────────────────────
 
+#: 🔴 OBSOLETE IN-SEASON, kept as a fallback. Verified 2026-09-12 on the Week 1
+#: My Team page: this matched ZERO elements while twelve MOVE buttons were
+#: already on the page. ESPN's in-season team page is permanently in edit mode;
+#: the preseason page had an explicit Edit Lineup button. Treat its absence as
+#: normal, never as a failure -- `_need`-ing it aborted every lineup write on
+#: 2026-09-12 before a single move was attempted.
 LINEUP_EDIT_BUTTON = "button:has-text('Edit Lineup'), a:has-text('Edit Lineup')"
-LINEUP_SAVE_BUTTON = "button:has-text('Save'), button:has-text('Submit')"
+
+#: 🔴 There is NO lineup save button in-season: MOVE + HERE commits each move
+#: immediately and ESPN paints MOVE_SAVED_BANNER. The old value here --
+#: "button:has-text('Save'), button:has-text('Submit')" -- matched exactly one
+#: element on the live page and it was the OneTrust COOKIE CONSENT dialog's
+#: hidden Submit (class `save-preference-btn-handler onetrust-close-btn-handler`).
+#: Clicking that saves a cookie preference, not a lineup. Any save candidate must
+#: therefore be visible AND outside the consent dialog -- see `_visible_save`.
+LINEUP_SAVE_BUTTON = (
+    "button:has-text('Save Lineup'), "
+    "button.lineup-save, "
+    "button:has-text('Save'):not([class*=onetrust]):not([class*=save-preference]), "
+    "button:has-text('Submit'):not([class*=onetrust]):not([class*=save-preference])"
+)
+
+#: 🔴 The team page and the read API DISAGREE on slot names, and matching a
+#: destination row on the API's spelling is why the 2026-09-12 flex move found
+#: no HERE button. The API's slot map (core/espn/league_state.SLOT_MAP) yields
+#: "RB/WR/TE" and "BE"; the page's SLOT column prints "FLEX" and "Bench".
+#: Verified 2026-09-12 off the live Week 1 page. Each entry is tried in order,
+#: so a relabel degrades to the next candidate instead of failing the move.
+SLOT_PAGE_LABELS = {
+    "RB/WR/TE": ("FLEX", "RB/WR/TE"),
+    "WR/TE": ("FLEX", "WR/TE"),
+    "BE": ("Bench", "BE"),
+    "IR": ("IR",),
+    "D/ST": ("D/ST", "DST"),
+}
+
+
+def slot_labels(slot: str) -> tuple[str, ...]:
+    """Every way the page might label `slot`, best guess first."""
+    return SLOT_PAGE_LABELS.get(slot.upper(), (slot,))
+
+
+#: ✅ VERIFIED 2026-09-12. ESPN's green success bar after a roster write, e.g.
+#: "Move saved - Jaguars D/ST added". This is the ONLY positive proof the page
+#: gives that a transaction committed, and reading it is what tells an add that
+#: committed-without-a-modal apart from an add that failed.
+MOVE_SAVED_BANNER = "move saved"
+
+#: ✅ VERIFIED 2026-09-12. The team page's toolbar Drop button, which opens the
+#: roster in drop-selection mode (each row renders DROP_PLAYER_BUTTON, and
+#: CONFIRM_BUTTON commits). `:not(.drop-action-btn)` keeps it from matching the
+#: ten per-row DROP buttons that appear once the mode is open.
+TEAM_DROP_TOOLBAR = (
+    "button:text-is('Drop'):not(.drop-action-btn), "
+    "a[role=button]:text-is('Drop'):not(.drop-action-btn)"
+)
 LINEUP_SLOT_ROW = "table tbody tr, [class*=player-row]"
 LINEUP_MOVE_BUTTON = "button:has-text('MOVE'), button:has-text('Move')"
 #: After MOVE is clicked on a player, every slot he can go to shows this.

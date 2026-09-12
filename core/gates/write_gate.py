@@ -156,11 +156,22 @@ def execute(
     try:
         receipt = performer()
     except Exception as e:
+        # 🔴 A write can fail AFTER part of it has committed on ESPN. On
+        # 2026-09-12 an add landed, the drop leg failed, and this recorded the
+        # whole thing as executed=False — so the roster held two defences and
+        # the week's add counter still read nothing spent. A PartialWrite
+        # carries the receipt for what DID land; record that as executed.
+        partial = getattr(e, "receipt", None)
         fail = GateResult(allowed=True, refused_by=None, reason=f"execution failed: {e}")
         decisions.record(action.kind, cites=action.cites, reason=action.reason,
                          predicted=predicted, alternative=alternative,
-                         executed=False, gate=fail, extra=extra)
-        log.error("FAILED %s: %s", action.kind.value, e)
+                         executed=partial is not None, gate=fail,
+                         receipt=str(partial) if partial else None, extra=extra)
+        if partial is not None:
+            log.error("PARTIAL %s — %s landed, then: %s",
+                      action.kind.value, partial.detail, e)
+        else:
+            log.error("FAILED %s: %s", action.kind.value, e)
         raise
 
     decisions.record(action.kind, cites=action.cites, reason=action.reason,

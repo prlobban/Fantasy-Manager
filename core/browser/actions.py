@@ -30,6 +30,25 @@ class ActionFailed(RuntimeError):
     """A write could not be completed. Never swallowed — the gate logs it."""
 
 
+class PartialWrite(ActionFailed):
+    """A write failed AFTER something already committed on ESPN.
+
+    🔴 This exists because of 2026-09-12. `add_drop` clicked Add, ESPN saw an
+    open bench spot and committed the add on the spot ("Move saved - Jaguars
+    D/ST added"), the drop leg then failed, and the gate recorded the whole
+    action as `executed: false`. Two things followed from that single lie: the
+    roster carried two defences into game week, and `record_add` never fired,
+    so the week's add counter still read 0 of 3 spent.
+
+    A failure that left the league changed must carry the change. The gate
+    reads `.receipt` off this and records `executed=True` with the reason.
+    """
+
+    def __init__(self, message: str, *, receipt: Receipt | None = None) -> None:
+        super().__init__(message)
+        self.receipt = receipt
+
+
 @dataclass
 class Receipt:
     action: str
@@ -161,7 +180,8 @@ def _wait_for_draft_button(page, row, *, timeout_ms: int):
 
 
 def set_lineup(s: EspnSession, league_id: int, team_id: int, season: int,
-               moves: list[tuple[int, str]]) -> Receipt:
+               moves: list[tuple[int, str]],
+               names: dict[int, str] | None = None) -> Receipt:
     """Apply start/sit moves. `moves` is [(espn_id, target_slot_name)].
 
     ESPN's editor is two clicks per move: MOVE on the player, then HERE on the
@@ -176,16 +196,29 @@ def set_lineup(s: EspnSession, league_id: int, team_id: int, season: int,
     )
     s.dismiss_overlays()
 
-    edit = _need(page, S.LINEUP_EDIT_BUTTON, what="the Edit Lineup button")
-    edit.first.click()
-    page.wait_for_timeout(1200)
+    # The in-season team page is ALREADY in edit mode — every row renders MOVE
+    # and no Edit Lineup button exists. Requiring it (what this did until
+    # 2026-09-12) aborted the write before the first move. Click it if ESPN is
+    # serving the preseason layout; otherwise carry on.
+    edit = S.first_present(page, S.LINEUP_EDIT_BUTTON)
+    if edit is not None:
+        edit.first.click()
+        page.wait_for_timeout(1200)
+    else:
+        log.info("no Edit Lineup button — in-season page, already editable")
 
     applied = 0
+    names = names or {}
     for espn_id, slot in moves:
         try:
-            row = _row_for_player(page, espn_id)
+            # The name matters for a DEFENCE: a D/ST has no headshot and a
+            # negative id, so the id scan cannot find its row. Without a name
+            # to fall back on, the 2026-09-12 write skipped the Jaguars
+            # silently and reported "0/2 applied".
+            row = _row_for_player(page, espn_id, names.get(espn_id))
             if row is None:
-                log.warning("no lineup row for player %s", espn_id)
+                log.warning("no lineup row for player %s (%s)", espn_id,
+                            names.get(espn_id) or "name unknown")
                 continue
             mv = row.locator(S.LINEUP_MOVE_BUTTON)
             if mv.count() == 0:
@@ -207,36 +240,94 @@ def set_lineup(s: EspnSession, league_id: int, team_id: int, season: int,
         except Exception as e:
             log.warning("lineup move for %s failed: %s", espn_id, e)
 
-    save = _need(page, S.LINEUP_SAVE_BUTTON, what="the lineup Save button")
-    save.first.click()
-    page.wait_for_timeout(1500)
+    # 🔴 Do NOT _need() a save. In-season each MOVE + HERE commits on its own
+    # and ESPN paints "Move saved"; there is no lineup save button. The old
+    # selector matched one element on the live page — the OneTrust cookie
+    # dialog's hidden Submit — so a "successful save" was a consent click.
+    save = _visible_save(page)
+    if save is not None:
+        save.click()
+        page.wait_for_timeout(1500)
+    else:
+        log.info("no lineup save control — MOVE/HERE commits each move directly")
 
+    # The banner is ESPN's own confirmation. Absent it, the caller re-reads the
+    # roster off the API before claiming anything (§10.6).
+    saved = _move_saved(page)
     return _receipt(
-        s, "set lineup", f"{applied}/{len(moves)} moves applied", verified=applied == len(moves)
+        s, "set lineup", f"{applied}/{len(moves)} moves applied",
+        verified=applied == len(moves) and saved,
     )
 
 
-def _slot_row_with_here(page, slot: str):
-    """The HERE button in the first row labelled with `slot` that offers one.
+def _visible_save(page):
+    """A save control that is actually a lineup save.
 
-    Slot names come from ESPN's own slot map ("RB", "RB/WR/TE", "BE"), which
-    is what the roster table prints in its first column.
+    Fails to None rather than clicking a stranger: the consent dialog's Submit
+    is invisible and carries `onetrust`/`save-preference` classes, and clicking
+    it looks like a successful save while the lineup never moved.
+    """
+    loc = S.first_present(page, S.LINEUP_SAVE_BUTTON)
+    if loc is None:
+        return None
+    for i in range(loc.count()):
+        e = loc.nth(i)
+        try:
+            cls = (e.get_attribute("class") or "").lower()
+            if "onetrust" in cls or "save-preference" in cls:
+                continue
+            if e.is_visible() and e.is_enabled():
+                return e
+        except Exception:
+            continue
+    return None
+
+
+def _move_saved(page, name: str | None = None) -> bool:
+    """Whether ESPN is showing its green "Move saved" bar.
+
+    The positive proof that a roster or lineup write committed. With `name`,
+    the banner must also mention that player, so one stale banner cannot
+    vouch for a different transaction.
+    """
+    try:
+        body = " ".join((page.inner_text("body") or "").split()).lower()
+    except Exception:
+        return False
+    if S.MOVE_SAVED_BANNER not in body:
+        return False
+    if name is None:
+        return True
+    surname = name.replace(" D/ST", "").split()[-1].lower()
+    return surname in body
+
+
+def _slot_row_with_here(page, slot: str):
+    """The HERE button in the first row the page labels as `slot`.
+
+    🔴 The slot name handed in comes from ESPN's READ API ("RB/WR/TE", "BE").
+    The page's own SLOT column spells those "FLEX" and "Bench", so matching the
+    API spelling against the page found nothing and the 2026-09-12 flex move
+    was cancelled as "no destination slot offering HERE". `S.slot_labels`
+    carries the aliases; each is tried in turn.
     """
     import re
 
-    label = re.compile(rf"^\s*{re.escape(slot)}\b", re.I)
     rows = page.locator(S.LINEUP_SLOT_ROW)
-    for i in range(rows.count()):
-        try:
-            r = rows.nth(i)
-            text = (r.inner_text() or "").strip()
-            if not label.search(text):
+    n = rows.count()
+    for candidate in S.slot_labels(slot):
+        label = re.compile(rf"^\s*{re.escape(candidate)}\b", re.I)
+        for i in range(n):
+            try:
+                r = rows.nth(i)
+                text = (r.inner_text() or "").strip()
+                if not label.search(text):
+                    continue
+                here = r.locator(S.LINEUP_HERE_BUTTON)
+                if here.count() > 0:
+                    return here
+            except Exception:
                 continue
-            here = r.locator(S.LINEUP_HERE_BUTTON)
-            if here.count() > 0:
-                return here
-        except Exception:
-            continue
     return None
 
 
@@ -286,7 +377,7 @@ def _row_for_player(page, espn_id: int, name: str | None = None):
 
 def add_drop(s: EspnSession, league_id: int, season: int,
              add_id: int, add_name: str, drop_id: int | None,
-             drop_name: str | None) -> Receipt:
+             drop_name: str | None, team_id: int | None = None) -> Receipt:
     page = s.goto(f"/football/players/add?leagueId={league_id}&seasonId={season}")
     s.dismiss_overlays()
 
@@ -303,6 +394,35 @@ def add_drop(s: EspnSession, league_id: int, season: int,
     btn = _need_in_row(page, add_name, S.ADD_PLAYER_BUTTON, what="an Add/Claim button")
     btn.first.click()
     page.wait_for_timeout(2000)
+
+    # 🔴 The Add click has TWO outcomes and 2026-09-12 conflated them:
+    #   roster full  -> a modal opens listing roster rows to drop.
+    #   room on bench-> ESPN commits the add THERE AND THEN, no modal, and
+    #                   paints "Move saved - <player> added".
+    # In the second case the old code went hunting for a drop row in a modal
+    # that never existed, raised, and reported the whole thing as failed while
+    # the player was already on the roster. The drop is a separate transaction
+    # from here, and the add must be recorded either way.
+    if _move_saved(page, add_name):
+        add_receipt = _receipt(
+            s, "add drop", f"add {add_name} (committed immediately, bench had room)",
+            verified=True,
+        )
+        if not drop_name:
+            return add_receipt
+        log.info("%s committed without a modal; dropping %s separately",
+                 add_name, drop_name)
+        try:
+            drop_player(s, league_id, team_id, season, drop_id, drop_name)
+        except Exception as e:
+            raise PartialWrite(
+                f"{add_name} IS ADDED and live on the roster, but the follow-up "
+                f"drop of {drop_name!r} failed: {e}. The add counts against §5.7; "
+                "do not re-add. The roster is carrying both players.",
+                receipt=add_receipt,
+            ) from e
+        return _receipt(s, "add drop", f"add {add_name}, drop {drop_name}",
+                        verified=True)
 
     if drop_name:
         row = _row_for_player(page, drop_id or 0, drop_name)
@@ -334,6 +454,57 @@ def add_drop(s: EspnSession, league_id: int, season: int,
 
     detail = f"add {add_name}" + (f", drop {drop_name}" if drop_name else "")
     return _receipt(s, "add drop", detail, verified=False)
+
+
+def drop_player(s: EspnSession, league_id: int, team_id: int, season: int,
+                drop_id: int | None, drop_name: str) -> Receipt:
+    """Drop one rostered player. The other half of a stream (D6.3).
+
+    ✅ Flow verified 2026-09-12 on the live team page: the toolbar Drop button
+    puts the roster into drop-selection mode, every eligible row renders an
+    enabled DROP (locked rows read LOCKED), and Continue commits.
+
+    This existed nowhere before 2026-09-12, which is why an add that committed
+    on its own had no way to finish the job.
+    """
+    page = s.goto(
+        f"/football/team?leagueId={league_id}&teamId={team_id}&seasonId={season}"
+    )
+    s.dismiss_overlays()
+
+    toolbar = _need(page, S.TEAM_DROP_TOOLBAR, what="the team page's Drop button")
+    toolbar.first.click()
+    page.wait_for_timeout(2000)
+
+    row = _row_for_player(page, drop_id or 0, drop_name)
+    if row is None:
+        raise ActionFailed(
+            f"no roster row for {drop_name!r} in drop mode — nothing was dropped"
+        )
+    d = row.locator(S.DROP_PLAYER_BUTTON)
+    if d.count() == 0 or not d.first.is_enabled():
+        raise ActionFailed(
+            f"no enabled DROP button on the row for {drop_name!r} "
+            "(a locked row reads LOCKED once his game has started)"
+        )
+    d.first.click()
+    page.wait_for_timeout(1000)
+
+    confirm = _need(page, S.CONFIRM_BUTTON, what="the drop Continue/Confirm button")
+    if confirm.first.is_disabled():
+        raise ActionFailed(
+            f"Continue is still disabled after selecting {drop_name!r} — ESPN has "
+            "not accepted the drop, so nothing was committed."
+        )
+    confirm.first.click()
+    page.wait_for_timeout(1500)
+    again = S.first_present(page, S.CONFIRM_BUTTON)
+    if again is not None and again.count() and not again.first.is_disabled():
+        again.first.click()
+        page.wait_for_timeout(1200)
+
+    return _receipt(s, "drop player", f"drop {drop_name}",
+                    verified=_move_saved(page, drop_name))
 
 
 # ── trades ───────────────────────────────────────────────────────────────────

@@ -516,6 +516,39 @@ def get_guardrails() -> str:
 # ════════════════════════════════════ WRITES ═════════════════════════════════
 
 
+def _run_write(action, perform):
+    """Run a gated write and hand the agent the REASON on failure.
+
+    🔴 Every write tool used to let the exception escape, and FastMCP turns
+    that into the string "Error executing tool" — which is all the agent saw
+    on 2026-09-12. It could not tell a dead browser session from a moved
+    button, and neither could the digest. The gate has already logged and
+    recorded by the time this catches.
+
+    Returns (gate, receipt, error-or-None). A PartialWrite returns BOTH its
+    receipt and the error: something landed and something didn't.
+    """
+    from core.browser.actions import ActionFailed
+
+    try:
+        gate, receipt = write_gate.execute(action, perform, skip_health=True)
+        return gate, receipt, None
+    except ActionFailed as e:
+        return (
+            write_gate.GateResult(allowed=True, refused_by=None,
+                                  reason=f"execution failed: {e}"),
+            getattr(e, "receipt", None),
+            str(e),
+        )
+    except Exception as e:
+        return (
+            write_gate.GateResult(allowed=True, refused_by=None,
+                                  reason=f"execution failed: {e}"),
+            None,
+            f"{type(e).__name__}: {e}",
+        )
+
+
 @mcp.tool()
 def set_lineup(moves: list[dict], reason: str, cites: list[str]) -> str:
     """Apply start/sit changes. AUTO — reversible until kickoff.
@@ -538,13 +571,32 @@ def set_lineup(moves: list[dict], reason: str, cites: list[str]) -> str:
                 sess, s.facts.settings.league_id, s.my_team_id,
                 s.facts.settings.season,
                 [(int(m["espn_id"]), str(m["slot"])) for m in moves],
+                names={p.espn_id: p.name for p in s.me.roster},
             )
 
-    gate, receipt = write_gate.execute(action, perform, skip_health=True)
+    gate, receipt, err = _run_write(action, perform)
     # No Slack here: the sweep posts ONE digest of what was done (Pearce,
     # 2026-09-05: "just what it did"). The reason lives in decisions.jsonl.
+    applied, landed = None, None
+    if receipt is not None:
+        # §10.6 — the page's own banner is not proof enough, and for a lineup
+        # move ESPN may not paint one at all. The READ API is the authority:
+        # re-read the roster and report the slot each player actually sits in.
+        after = _snap(refresh=True)
+        applied = {
+            int(m["espn_id"]): after.me.slots.get(int(m["espn_id"]), "?")
+            for m in moves
+        }
+        landed = all(
+            applied[int(m["espn_id"])] == str(m["slot"]) for m in moves
+        )
+        # Don't hand back "UNVERIFIED" when the API has just confirmed every
+        # move; an honest receipt is the one the roster agrees with.
+        receipt.verified = landed
     return _ok(allowed=gate.allowed, refused_by=gate.refused_by,
-               reason=gate.reason, receipt=str(receipt) if receipt else None)
+               reason=gate.reason, error=err,
+               receipt=str(receipt) if receipt else None,
+               verified=landed, slots_after=applied)
 
 
 @mcp.tool()
@@ -589,15 +641,21 @@ def add_drop(add_id: int, drop_id: int | None, reason: str, cites: list[str]) ->
             return A.add_drop(
                 sess, s.facts.settings.league_id, s.facts.settings.season,
                 add_id, add_p.name, drop_id, drop_p.name if drop_p else None,
+                team_id=s.my_team_id,
             )
 
-    gate, receipt = write_gate.execute(action, perform, skip_health=True)
+    gate, receipt, err = _run_write(action, perform)
+    # 🔴 Count the add whenever the player actually landed — including the
+    # partial case where the add committed and the drop then failed. Counting
+    # only clean successes is how 2026-09-12 spent an add off the books and
+    # left the week reading 0 of 3.
     if gate.allowed and receipt:
         from core.gates import rate_limits
 
         rate_limits.record_add(add_id, drop_id)
     return _ok(allowed=gate.allowed, refused_by=gate.refused_by,
-               reason=gate.reason, receipt=str(receipt) if receipt else None)
+               reason=gate.reason, error=err,
+               receipt=str(receipt) if receipt else None)
 
 
 @mcp.tool()
