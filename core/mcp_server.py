@@ -517,6 +517,58 @@ def get_guardrails() -> str:
 # ════════════════════════════════════ WRITES ═════════════════════════════════
 
 
+def strip_locked_moves(moves, by_id, slots, starting_slots, week):
+    """§4.8 — drop the lineup moves ESPN physically cannot apply.
+
+    Two ways a move is impossible once games are under way:
+
+      1. **The player is locked.** His game has kicked off, his row reads
+         LOCKED instead of MOVE, and his points are already banked.
+      2. **The destination is locked.** Every instance of the target slot is
+         held by a locked player, so nobody can be moved into it. A slot with
+         a spare instance (two RB slots, one locked) is still legal, which is
+         why this counts capacity rather than assuming one of each.
+
+    Missing (2) is what made 2026-09-12's second attempt futile: the locked
+    player was correctly stripped, and the leftover half of the pair —
+    "Boswell -> K", into the K slot Mevis was locked into — still went to the
+    browser and applied 0 of 1.
+
+    Returns (kept moves, skipped espn_ids, human reasons).
+    """
+    frozen = {
+        int(m["espn_id"]) for m in moves
+        if (pl := by_id.get(int(m["espn_id"]))) is not None and pl.game_locked(week)
+    }
+
+    capacity: dict[str, int] = {}
+    for rs in starting_slots:
+        capacity[rs.name] = capacity.get(rs.name, 0) + rs.count
+    held: dict[str, int] = {}
+    for pid, slot in slots.items():
+        pl = by_id.get(pid)
+        if pl is not None and slot not in ("BE", "IR") and pl.game_locked(week):
+            held[slot] = held.get(slot, 0) + 1
+    full = {name for name, n in held.items() if n >= capacity.get(name, 0)}
+
+    blocked = {
+        int(m["espn_id"]) for m in moves
+        if str(m["slot"]) in full and int(m["espn_id"]) not in frozen
+    }
+
+    why: list[str] = []
+    if frozen:
+        why.append(", ".join(by_id[i].name for i in sorted(frozen))
+                   + ": game already started, so ESPN has him locked in his slot")
+    if blocked:
+        why.append(", ".join(sorted(full))
+                   + ": every instance of that slot is held by a locked player")
+
+    skip = frozen | blocked
+    kept = [m for m in moves if int(m["espn_id"]) not in skip]
+    return kept, sorted(skip), why
+
+
 def _run_write(action, perform):
     """Run a gated write and hand the agent the REASON on failure.
 
@@ -566,19 +618,12 @@ def set_lineup(moves: list[dict], reason: str, cites: list[str]) -> str:
     # tool is the agent constructing one by hand, and a rule the agent has to
     # remember is not a rule (2026-09-12).
     by_id = {p.espn_id: p for p in s.me.roster}
-    frozen = [
-        int(m["espn_id"]) for m in moves
-        if (pl := by_id.get(int(m["espn_id"]))) is not None and pl.game_locked(s.week)
-    ]
-    if frozen:
-        names = ", ".join(by_id[i].name for i in frozen)
-        moves = [m for m in moves if int(m["espn_id"]) not in set(frozen)]
-        if not moves:
-            return _ok(
-                allowed=False, refused_by="§4.8",
-                reason=f"{names}: game already started, so ESPN has him locked "
-                       "in his slot for this week. Nothing was attempted.",
-            )
+    moves, frozen, why = strip_locked_moves(
+        moves, by_id, s.me.slots, s.facts.settings.starting_slots, s.week
+    )
+    if frozen and not moves:
+        return _ok(allowed=False, refused_by="§4.8",
+                   reason="; ".join(why) + ". Nothing was attempted.")
 
     action = Action(
         kind=ActionKind.SET_LINEUP,
@@ -620,7 +665,7 @@ def set_lineup(moves: list[dict], reason: str, cites: list[str]) -> str:
                reason=gate.reason, error=err,
                receipt=str(receipt) if receipt else None,
                verified=landed, slots_after=applied,
-               skipped_locked=[by_id[i].name for i in frozen] or None)
+               skipped_locked=[by_id[i].name for i in frozen if i in by_id] or None)
 
 
 @mcp.tool()
