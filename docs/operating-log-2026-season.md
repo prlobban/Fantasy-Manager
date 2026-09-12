@@ -55,6 +55,37 @@ countering 🔴 never · league settings / chat 🔴 never.
 
 ## Change log — newest first
 
+**2026-09-12 — the first in-season write attempt: five defects in the browser layer, and a
+partial write the gate logged as nothing.** Week 1 replaced the preseason team page every selector
+was verified against on 09-08. The 07:30 sweep reasoned correctly and lost all three writes in the
+browser; the agent was handed only `Error executing tool` and escalated blind.
+
+Found and fixed (`b085235`):
+1. **No "Edit Lineup" button exists in-season** — the page is permanently editable, twelve MOVE
+   buttons already on it. `_need()` on that button aborted the lineup write before its first move.
+2. **`LINEUP_SAVE_BUTTON` matched the OneTrust cookie dialog's hidden Submit** — the one element it
+   found on the live page. A "successful save" was a consent click.
+3. **The page and the read API disagree on slot names** — API `RB/WR/TE` / `BE`, page `FLEX` /
+   `Bench`. The flex move was cancelled as "no destination slot offering HERE".
+4. **`set_lineup` matched rows by ESPN id only** — a D/ST has no headshot and a negative id, so the
+   Jaguars were skipped silently. The add modal already had the name fallback; the lineup didn't.
+5. 🔴 **The gate recorded a partial write as nothing.** ESPN commits an add the instant the roster
+   has room: the Jaguars D/ST went on at 07:31, the drop of the Browns then failed, and `add_drop`
+   reported total failure. So the roster carried **two defences into game week**, and `record_add`
+   never fired — the week read **0 of 3 adds spent** when one was gone.
+
+Also built: **`drop_player`**, which the system never had (an add that commits on its own had no way
+to finish the job; flow verified live). Every write tool now returns the failure reason instead of
+letting FastMCP flatten it, and `set_lineup` verifies against the **read API**, not a banner.
+
+**Live state corrected:** lineup applied and API-confirmed — Garrett Wilson to the flex, Jaguars
+D/ST starting, Browns benched. The add was **back-recorded** to the rate limiter: 1 of 3 spent, 2
+left. Health 6/6, 346 tests, ruff clean. **Not pushed** — the commit is local to the box.
+
+⚠️ **The Browns D/ST is still rostered.** The stream's drop leg never ran and dropping is
+irreversible, so it was left as Pearce's call. Nothing needs it this week: Jacksonville starts and
+Cleveland sits on the bench.
+
 **2026-09-11 — two days of sweeps ran without a brain, and the alert never said so.**
 The box's Claude OAuth session expired **2026-09-09** (`~/.claude/.credentials.json`:
 `expiresAt: 0`, refresh token dead; `claude auth status` → `loggedIn: false`). From then on every
