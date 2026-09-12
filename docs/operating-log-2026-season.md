@@ -55,6 +55,32 @@ countering 🔴 never · league settings / chat 🔴 never.
 
 ## Change log — newest first
 
+**2026-09-12 (13:51) — the first sweep on the repaired write path, and it found the next bug.**
+Ran the real cron path (`cron_manage.sh sweep`) with `ENABLED=on`. Clean: rc=0, no
+`Error executing tool`, no writes needed because the lineup was already correct. The agent then
+refused core's own lineup plan and was right to.
+
+🔴 **§4.7 was benching the better defence.** Core wanted the Browns D/ST (4.9 weekly) in the D/ST
+slot over the Jaguars (9.4), printing both numbers itself. §4.7 working as written: the Browns are
+~25 ROS VOR better and the weekly gap (4.5) sat inside `stud_bench_margin` 8.0, so the rule started
+the better rest-of-season asset. Correct for Josh Allen, who it was written for — wrong at a
+**streamed** position, where we drop whoever is in the slot on Monday and the ROS number describes a
+player we will not have. **§4.7 now exempts K and D/ST** (`STREAMED_POSITIONS` moved to
+`core.model.schema`, one list for the optimiser and the waiver logic). Fixed in `70cfcb2`.
+
+**This was not theoretical:** today's lineup was right only because the agent overrode core by hand.
+**Tomorrow's unattended Sunday 11:00 sweep would have swapped Jacksonville out for Cleveland before
+kickoff.** Core's plan now matches the live lineup with no divergence. 348 tests; the new test was
+verified to fail without the fix.
+
+⚠️ **Open, flagged not fixed — stale projections for completed games.** Core carries Harrison Mevis
+at an 8.0 weekly projection although his Week 1 game is final (Rams 7, 49ers 27, played Thu 09-10 in
+Melbourne), and built a +1.02/wk Boswell add recommendation on it. The agent has declined that add
+twice now on its own judgment, and has raised the underlying question both times: does the engine's
+"week 1" mean the completed week or the upcoming one for a team that has already played? Everything
+priced off a locked player's projection is suspect until that is answered — including the starting
+total the matchup call is made against.
+
 **2026-09-12 — the first in-season write attempt: five defects in the browser layer, and a
 partial write the gate logged as nothing.** Week 1 replaced the preseason team page every selector
 was verified against on 09-08. The 07:30 sweep reasoned correctly and lost all three writes in the
