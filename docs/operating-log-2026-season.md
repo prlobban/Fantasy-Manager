@@ -55,6 +55,43 @@ countering 🔴 never · league settings / chat 🔴 never.
 
 ## Change log — newest first
 
+**2026-09-14 — Week 1 won 150.3–113.2. Two more rules, and the quiet weekend explained.**
+Every scheduled run since 09-12 completed `rc=0` and **wrote nothing** — no adds, no drops, no
+trades, no lineup changes. That was correct, and worth stating plainly because "nothing happened"
+and "it is broken" look identical from outside.
+
+**Why nothing happened.** Week 1 is *still the live week* — Denver at Kansas City is the Monday
+nighter, and Kelce (benched) is the only player of ours left. Everyone else is locked, so §4.8
+correctly grades every waiver candidate at **+0.0/wk**: you cannot add a player into a game that has
+already kicked off. Trades were **not** blind — five ideas were generated off ROS value and the
+agent declined them on judgment (the same McConkey+Loveland package chasing backs who had just
+exploded on Sunday — it read that as a fleece that costs a partner for 14 days). That is reasoning,
+not silence.
+
+**§5.9 — decide on the week an add can actually pay in.** Every request this system makes omits
+`scoringPeriodId`, so ESPN answers with the current scoring period only. Harmless while a week is
+live; **not** harmless in the gap between a week's last game and ESPN's Tuesday rollover, when every
+projection is settled and every candidate grades 0.0. **The Tuesday 07:30 run sits in that window.**
+`decision_week` is now `week` while any of its games are still to come and `week + 1` once the slate
+is done — decided on the **schedule, not the calendar**, which is exactly why today it correctly
+stayed at 1. When it advances, one extra call fills in next week's projections (verified live:
+13/13 of our roster, 277 of a 330 pool). Waivers value against it; the lineup still uses `week`.
+
+**§5.10 — never stream into a settled slot.** Answers half of the agent's own 09-13 question. A
+locked incumbent at K or D/ST means the add cannot score there *and* the incumbent cannot be
+dropped, so the drop falls through to an innocent third player — the exact 09-12 sequence that left
+us carrying two kickers on a full bench. Refused before the browser opens, with tests.
+
+⚠️ **Still open, still Pearce's call:** a **pre-Thursday lineup pass**. The Melbourne opener kicked
+off Thursday 14:35 CT, well before the Thursday 18:30 lineup pass, which is how the K slot froze at
+0.85. A standing cadence change is a cost decision, so it was not made unilaterally.
+
+**Also fixed:** the §4.8 tests anchored "upcoming" kickoffs to a frozen `NOW` written on 09-12; six
+of them began failing on 09-14 when that moment passed. Offsets are now relative to the run — a test
+that rots on a calendar date is worse than no test.
+
+**377 tests**, ruff clean, health **6/6**. `7016b20` on the box, laptop and GitHub.
+
 **2026-09-12 (15:00) — §4.8: the system learned that a game has a clock. Live and pushed.**
 Nothing in the codebase knew a game had started. Every projection read as live and every player as
 movable. Three wrong answers came out of that one gap, and the third would have cost points tomorrow.
