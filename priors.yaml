@@ -137,6 +137,45 @@ research:
   # The post-order-lock refresh, by current VOR.
   refresh_top: 15
 
+
+# ── §2.7 research, and how far narrative may move a number ──────────────────
+#
+# 🔴 Measured on 2025, weeks 1-14, 1,989 player-weeks with a weekly projection
+# of 5.0 or more (scripts/measure_projection_noise.py):
+#
+#     POS      n   median     p25     p75  bust<50%  boom>150%
+#      QB    246     1.02    0.73    1.25       11%        12%
+#      RB    533     0.91    0.61    1.25       17%        15%
+#      WR    628     0.86    0.47    1.36       27%        21%
+#      TE    239     0.93    0.54    1.54       23%        27%
+#     ALL   1989     0.94    0.59    1.36       20%        21%
+#
+# The p25-p75 spread of actual/projected is 0.59-1.36. The research
+# multiplier's ENTIRE range is 0.75-1.25 — narrower than the noise it is
+# adjusting. So a multiplier is a weak signal at the best of times, and at its
+# cap it claims more precision than a weekly projection can carry.
+#
+# 2026-09-12 is the case: Colston Loveland took the full 1.25 on a dossier with
+# snap_share null, target_share null and confidence medium — the boost was pure
+# preview narrative. He scored 0.0 while Cole Kmet, projected 2.5, scored 10.5.
+# The start itself was still right (9.67 beat Kelce's 7.70 before any boost),
+# which is the point: the multiplier added false precision, not a better
+# decision.
+#
+# The rule: an adjustment may not claim more confidence than its evidence.
+  # Shrink the multiplier toward 1.0 by the dossier's own stated confidence.
+  confidence_scale:
+    high: 1.0
+    medium: 0.5
+    low: 0.25
+  # A POSITIVE multiplier is a usage claim — "he is about to be featured".
+  # With neither snap share nor target share there is nothing behind it, so it
+  # is shrunk again. Downgrades are not: they are usually news (injury,
+  # benching, game script), which is legitimately qualitative, and the 20%
+  # bust rate says the downside is the side worth respecting.
+  unknown_usage_scale: 0.5
+
+
 judge:
   # §3.10 — Pearce's gate, 2026-09-04. The budget is the SMALLER of this and
   # the observed pace, because opponents do not use their clock: 7 picks at 90s

@@ -222,6 +222,40 @@ def load_all(*, week: int | None = None, **kw) -> dict[int, WeekDossier]:
 
 # ── the bridge to the valuation ──────────────────────────────────────────────
 
+def evidence_scale(d: WeekDossier) -> float:
+    """§2.7 — how much of this dossier's multiplier the evidence supports.
+
+    1.0 means take it as written; 0.0 means ignore it. See the measurement in
+    priors.yaml: a weekly projection's own p25-p75 spread (0.59-1.36) is wider
+    than the multiplier's whole range, so an adjustment at the cap is claiming
+    precision the underlying number does not have.
+    """
+    p = priors()
+    conf = str(d.confidence or "medium").strip().lower()
+    table = p.get("research.confidence_scale")
+    scale = float(table.get(conf, table.get("medium")))
+
+    if d.week_multiplier > 1.0:
+        usage = d.usage or {}
+        if usage.get("snap_share") is None and usage.get("target_share") is None:
+            scale *= float(p.get("research.unknown_usage_scale"))
+    return scale
+
+
+def damped_week_multiplier(d: WeekDossier) -> float:
+    """The §2.7 multiplier actually applied, after evidence scaling.
+
+    Loveland, 2026-09-12: raw 1.25, confidence medium, no snap or target share
+    -> scale 0.25 -> 1.06. The projection moves from 9.67 to 10.3 instead of
+    12.1, and still starts over Kelce at 7.70. The decision is unchanged; only
+    the false precision is gone.
+    """
+    raw = float(d.week_multiplier or 1.0)
+    if raw == 1.0:
+        return 1.0
+    return 1.0 + (raw - 1.0) * evidence_scale(d)
+
+
 def contexts(dossiers: dict[int, WeekDossier], *, window: str) -> dict[int, PlayerContext]:
     """PlayerContext per player, for the given window.
 
@@ -234,8 +268,9 @@ def contexts(dossiers: dict[int, WeekDossier], *, window: str) -> dict[int, Play
         if d.veto:
             ctx.news_veto = d.veto_reason or "research veto"
         if window == "week":
-            if d.week_multiplier != 1.0:
-                ctx.multipliers["research_week"] = d.week_multiplier
+            damped = damped_week_multiplier(d)
+            if damped != 1.0:
+                ctx.multipliers["research_week"] = damped
         else:
             if d.ros_multiplier != 1.0:
                 ctx.news_override = d.ros_multiplier

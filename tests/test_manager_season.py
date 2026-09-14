@@ -342,7 +342,68 @@ def test_a_weekly_multiplier_is_clamped_and_lands_as_a_named_context_term():
     d, _ = R.validate(_raw(week_multiplier=1.9))
     assert d.week_multiplier == pytest.approx(1.25)
     ctx = R.contexts({5: d}, window="week")
-    assert ctx[5].multipliers["research_week"] == pytest.approx(1.25)
+    # Clamped to 1.25, then §2.7 evidence-scaled on the way in: this dossier is
+    # high confidence but carries NO structured snap or target share, and a
+    # positive multiplier is a usage claim. 1 + 0.25 * (1.0 * 0.5) = 1.125.
+    assert ctx[5].multipliers["research_week"] == pytest.approx(1.125)
+
+
+# ── §2.7 evidence scaling ────────────────────────────────────────────────────
+#
+# Measured on 2025 (1,989 player-weeks): actual/projected runs 0.59-1.36 across
+# the interquartile range, so the multiplier's whole 0.75-1.25 band sits inside
+# the noise. An adjustment may not claim more confidence than its evidence.
+#
+# 2026-09-12: Loveland took the full 1.25 on snap_share null, target_share null,
+# confidence medium — pure preview narrative. He scored 0.0; Kmet, projected
+# 2.5, scored 10.5.
+
+
+def test_a_raise_backed_by_real_usage_survives_intact():
+    d, _ = R.validate(_raw(week_multiplier=1.2, confidence="high",
+                           usage={"trend": "rising", "snap_share": 0.78,
+                                  "detail": "78% of snaps"}))
+    assert R.damped_week_multiplier(d) == pytest.approx(1.2)
+
+
+def test_a_raise_on_no_usage_data_is_cut_hard():
+    """🔴 The Loveland case: medium confidence, nothing structured behind it."""
+    d, _ = R.validate(_raw(week_multiplier=1.25, confidence="medium",
+                           usage={"trend": "rising", "detail": "previews love him"}))
+    # 1 + 0.25 * (0.5 * 0.5) = 1.0625
+    assert R.damped_week_multiplier(d) == pytest.approx(1.0625)
+
+
+def test_prose_is_not_evidence():
+    """A snap share in the detail string is not a snap share."""
+    loose = R.validate(_raw(week_multiplier=1.2, confidence="high",
+                            usage={"trend": "rising", "detail": "snaps 78%"}))[0]
+    hard = R.validate(_raw(week_multiplier=1.2, confidence="high",
+                           usage={"trend": "rising", "snap_share": 0.78,
+                                  "detail": "snaps 78%"}))[0]
+    assert R.damped_week_multiplier(loose) < R.damped_week_multiplier(hard)
+
+
+def test_a_downgrade_is_not_damped_by_missing_usage():
+    """A cut is usually news — injury, benching, game script — and the 20% bust
+    rate says the downside is the side worth respecting. Confidence still
+    scales it; absent usage data does not."""
+    d, _ = R.validate(_raw(week_multiplier=0.8, confidence="high",
+                           usage={"trend": "falling", "detail": "lost the job"}))
+    assert R.damped_week_multiplier(d) == pytest.approx(0.8)
+
+
+def test_confidence_scales_a_downgrade():
+    d, _ = R.validate(_raw(week_multiplier=0.8, confidence="low",
+                           usage={"trend": "falling", "detail": "one beat report"}))
+    # 1 + (-0.2 * 0.25) = 0.95
+    assert R.damped_week_multiplier(d) == pytest.approx(0.95)
+
+
+def test_a_neutral_multiplier_stays_neutral():
+    d, _ = R.validate(_raw(week_multiplier=1.0))
+    assert R.damped_week_multiplier(d) == 1.0
+    assert "research_week" not in R.contexts({5: d}, window="week")[5].multipliers
 
 
 def test_a_big_weekly_move_on_one_host_is_dropped():
