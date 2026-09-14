@@ -40,16 +40,24 @@ def _snap(refresh: bool = False) -> ls_mod.LeagueState:
     return _state
 
 
-def _vals(state: ls_mod.LeagueState, window: str = "week"):
+def _vals(state: ls_mod.LeagueState, window: str = "week",
+          week: int | None = None):
     """Valuations with this morning's research folded in (D1.4), same as the
-    packet — the tools and the packet must never disagree."""
+    packet — the tools and the packet must never disagree.
+
+    `week` overrides which week the weekly window values. Waivers pass
+    `state.decision_week` (§5.9): once the current week's slate is finished,
+    an add can only pay from the NEXT week, and valuing it against the played
+    one grades every candidate at exactly 0.0.
+    """
     from core.manager import research as R
     from core.model.priors import priors
 
+    wk = week or state.week
     dossiers = R.load_all(week=state.week)
     return value_pool(
         state.all_players(), state.facts.settings,
-        window=window, week=state.week if window == "week" else None,
+        window=window, week=wk if window == "week" else None,
         weeks_remaining=max(1, state.facts.settings.regular_season_weeks - state.week + 1),
         current_week=state.week,
         contexts=R.contexts(dossiers, window=window),
@@ -185,7 +193,8 @@ def get_waiver_plan() -> str:
     our queue position, and free agents cost nothing at all (§5.3.2).
     """
     s = _snap()
-    v = _vals(s)
+    # §5.9 — value candidates against the week an add could actually pay in.
+    v = _vals(s, week=s.decision_week)
     ros = _vals(s, window="ros")
     from core.gates import rate_limits
     from core.manager import waivers as w

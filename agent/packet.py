@@ -338,8 +338,18 @@ def build(task: str, state: ls_mod.LeagueState | None = None,
     if task in ("daily", "tuesday") and scope in ("all", "waivers"):
         from core.manager import waivers as w
 
+        # §5.9 — the add pays from `decision_week`, not from a slate that has
+        # already been played. Identical to `vals` while the week is live.
+        wvals = vals
+        if st.decision_week != st.week:
+            wvals = value_pool(
+                st.all_players(), st.facts.settings, window="week",
+                week=st.decision_week, weeks_remaining=weeks_left,
+                current_week=st.week,
+                contexts=R.contexts(dossiers, window="week"),
+            )
         wplan = w.build(
-            me.roster, st.free_agents, vals, st.facts.settings,
+            me.roster, st.free_agents, wvals, st.facts.settings,
             waiver_priority=me.waiver_priority,
             on_waivers=st.on_waivers,
             bench_open=st.bench_open,

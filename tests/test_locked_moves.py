@@ -14,7 +14,14 @@ from datetime import UTC, datetime, timedelta
 from core.mcp_server import strip_locked_moves
 from core.model.schema import Player, Pos, ProGame, RosterSlot
 
-NOW = datetime(2026, 9, 12, 19, 0, tzinfo=UTC)
+#: ⚠️ Anchored to the REAL clock, deliberately. `Player.game_locked` defaults
+#: to `datetime.now(UTC)`, and the paths these tests exercise (value_pool, the
+#: optimiser, the write gate) call it with no argument. A frozen NOW therefore
+#: rots: these tests were written on 2026-09-12 with "upcoming" kickoffs 18
+#: hours out, and every one of them failed on 2026-09-14 when that moment
+#: passed. Relative offsets keep "played" and "upcoming" true whenever the
+#: suite runs.
+NOW = datetime.now(UTC)
 
 SLOTS = [
     RosterSlot(name="QB", count=1, eligible=(Pos.QB,)),

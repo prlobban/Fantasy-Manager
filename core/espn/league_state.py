@@ -54,6 +54,22 @@ class LeagueState:
     #: Player ids inside the 24h waiver window — these cost priority (§5.3.2).
     on_waivers: set[int] = field(default_factory=set)
     opponent_team_id: int | None = None
+    #: The week a FORWARD-LOOKING decision should be valued against (§5.9).
+    #:
+    #: ESPN's `week` stays on the current scoring period until it rolls over on
+    #: Tuesday. Between the last Sunday game and that rollover, every game in
+    #: `week` is played, so every weekly projection is settled and every waiver
+    #: gain computes to exactly 0.0 — the Monday sweep cannot recommend
+    #: anything, on the one day Sunday's breakouts are most obvious.
+    #: This is `week` while any of its games are still to come, and `week + 1`
+    #: once they are all done. The lineup still uses `week`; there is nothing
+    #: movable there and pretending otherwise would plan next week's lineup
+    #: into this week's locked slots.
+    decision_week: int = 0
+
+    def __post_init__(self) -> None:
+        if not self.decision_week:
+            self.decision_week = self.week
 
     @property
     def me(self) -> TeamState:
@@ -135,9 +151,18 @@ def snapshot(
 
     fa, on_waivers = _free_agents(c, free_agent_size, byes, pro_games)
 
+    rostered = [p for t in teams.values() for p in t.roster]
+    decision_wk = _decision_week(wk, rostered + fa)
+    if decision_wk != wk:
+        # ESPN serves these happily; we simply never asked, because no request
+        # ever carried a scoringPeriodId. Without it the whole pool values at
+        # 0.0 for the week we are actually deciding about.
+        _merge_week_projections(c, rostered + fa, decision_wk, free_agent_size)
+
     log.info(
-        "snapshot: week %s, %d teams, %d free agents, %d on waivers",
-        wk, len(teams), len(fa), len(on_waivers),
+        "snapshot: week %s (deciding on week %s), %d teams, %d free agents, "
+        "%d on waivers",
+        wk, decision_wk, len(teams), len(fa), len(on_waivers),
     )
     return LeagueState(
         taken_at=datetime.now(UTC),
@@ -148,6 +173,7 @@ def snapshot(
         free_agents=fa,
         on_waivers=on_waivers,
         opponent_team_id=opponent,
+        decision_week=decision_wk,
     )
 
 
@@ -162,6 +188,67 @@ def _find_opponent(raw: dict, my_id: int, week: int) -> int | None:
         if away == my_id:
             return home
     return None
+
+
+def _decision_week(week: int, pool: list[Player]) -> int:
+    """§5.9 — the week a waiver or trade decision is actually about.
+
+    `week` while any of its games are still to be played; `week + 1` once the
+    slate is done. Decided on the schedule rather than the clock so it does not
+    depend on what day the box thinks it is.
+
+    Fails SAFE: with no schedule data at all (`game_locked` fails open, so
+    nothing reads as locked) this returns `week` — the old behaviour.
+    """
+    known = [p for p in pool if p.games.get(week) is not None]
+    if not known:
+        return week
+    return week if any(not p.game_locked(week) for p in known) else week + 1
+
+
+def _merge_week_projections(c: EspnClient, pool: list[Player], week: int,
+                            size: int) -> int:
+    """Fill `proj_week[week]` for the pool from ESPN, in place.
+
+    One extra call, carrying the `scoringPeriodId` that the normal fetch omits.
+    Non-fatal: a failure leaves the pool valuing at 0.0 for that week, which is
+    the behaviour this exists to fix, so it is logged loudly.
+    """
+    filters = {
+        "players": {
+            "filterStatus": {"value": ["FREEAGENT", "WAIVERS", "ONTEAM"]},
+            "limit": max(size, 300),
+            "offset": 0,
+            "sortPercOwned": {"sortAsc": False, "sortPriority": 1},
+        }
+    }
+    try:
+        data = c.get_view("kona_player_info", filters=filters,
+                          params={"scoringPeriodId": week})
+    except Exception as e:
+        log.warning("could not load week-%s projections: %s", week, e)
+        return 0
+
+    proj: dict[int, float] = {}
+    for entry in data.get("players") or []:
+        p = entry.get("player") or {}
+        pid = p.get("id")
+        if pid is None:
+            continue
+        for s in p.get("stats") or []:
+            if (int(s.get("statSourceId", -1)) == 1
+                    and int(s.get("statSplitTypeId", -1)) == 1
+                    and int(s.get("scoringPeriodId") or 0) == week):
+                proj[int(pid)] = float(s.get("appliedTotal") or 0.0)
+                break
+
+    n = 0
+    for pl in pool:
+        if (v := proj.get(pl.espn_id)) is not None:
+            pl.proj_week[week] = v
+            n += 1
+    log.info("merged week-%s projections for %d/%d players", week, n, len(pool))
+    return n
 
 
 def _free_agents(

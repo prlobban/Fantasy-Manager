@@ -30,7 +30,14 @@ from core.model.schema import (
 )
 from core.model.value import value_pool
 
-NOW = datetime(2026, 9, 12, 19, 0, tzinfo=UTC)
+#: ⚠️ Anchored to the REAL clock, deliberately. `Player.game_locked` defaults
+#: to `datetime.now(UTC)`, and the paths these tests exercise (value_pool, the
+#: optimiser, the write gate) call it with no argument. A frozen NOW therefore
+#: rots: these tests were written on 2026-09-12 with "upcoming" kickoffs 18
+#: hours out, and every one of them failed on 2026-09-14 when that moment
+#: passed. Relative offsets keep "played" and "upcoming" true whenever the
+#: suite runs.
+NOW = datetime.now(UTC)
 
 
 def settings_k() -> LeagueSettings:
