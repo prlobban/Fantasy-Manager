@@ -198,6 +198,31 @@ def weekly_gain_for(
     return max(0.0, gain), replaced
 
 
+def stream_slot_settled(pos: Pos, roster: list[Player], week: int) -> Player | None:
+    """§5.10 / D6.4 — is this streamed slot already decided for `week`?
+
+    A K or D/ST is a one-week rental valued on this week's matchup (D6.1), and
+    its drop is always the incumbent (D6.3). Once every incumbent's game has
+    kicked off the slot is settled: the add cannot score there, and the drop
+    ESPN would accept is somebody else entirely.
+
+    2026-09-12: Boswell was added over a locked Mevis, the drop fell through to
+    the Browns D/ST, and the roster carried two kickers into a week where the K
+    slot was frozen at 0.85 points. One add and one bench spot, for nothing.
+
+    Returns the locked incumbent to name in the refusal, or None if the slot is
+    still live (or nobody holds it, in which case the add is a free fill).
+    """
+    if pos not in STREAMED_POSITIONS:
+        return None
+    incumbents = [p for p in roster if p.pos is pos]
+    if not incumbents:
+        return None
+    if all(p.game_locked(week) for p in incumbents):
+        return incumbents[0]
+    return None
+
+
 def protected_ids(roster: list[Player], ros_valuations: dict[int, Valuation]) -> set[int]:
     """§5.5 — the top-N players by ROS VOR are never dropped. Enforced in
     the add_drop tool as well as honoured here."""

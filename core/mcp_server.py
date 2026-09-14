@@ -703,6 +703,30 @@ def add_drop(add_id: int, drop_id: int | None, reason: str, cites: list[str]) ->
                        reason=f"{drop_p.name} is a top-{top_n} player by ROS VOR — never "
                               "dropped; trade him if you must move him")
 
+    # §5.10 / D6.4 — never stream into a slot that is already settled.
+    #
+    # A K or D/ST is a one-week rental whose whole value is this week's matchup
+    # (D6.1), and the drop is always the incumbent (D6.3). If the incumbent's
+    # game has already kicked off, ESPN will not let him be dropped and he
+    # cannot be benched — so the add cannot score, the drop lands on some
+    # innocent third player, and we have spent an add and a roster spot on
+    # nothing.
+    #
+    # Exactly that happened on 2026-09-12: Boswell was added over a locked
+    # Mevis, the drop fell through to the Browns D/ST, and the roster carried
+    # two kickers into a week where the K slot was frozen at 0.85 points.
+    from core.manager.waivers import stream_slot_settled
+
+    if (stuck := stream_slot_settled(add_p.pos, s.me.roster, s.week)) is not None:
+        return _ok(
+            allowed=False, refused_by="§5.10",
+            reason=f"{stuck.name}'s game has already started, so the "
+                   f"{add_p.pos.value} slot is settled for week {s.week}: "
+                   f"{add_p.name} cannot score there and the incumbent cannot "
+                   "be dropped. Stream him next week instead — adding now "
+                   "spends an add and a bench spot on nothing.",
+        )
+
     kind = (ActionKind.WAIVER_CLAIM if add_id in s.on_waivers else ActionKind.ADD_DROP)
     action = Action(
         kind=kind,
