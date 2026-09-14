@@ -55,6 +55,29 @@ countering 🔴 never · league settings / chat 🔴 never.
 
 ## Change log — newest first
 
+**2026-09-14 (10:50) — the cadence was never the gap, and checking that found a championship bug.**
+Pearce, on the proposed pre-Thursday lineup pass: *"thursday should run at 7am already shouldn't
+it?"* **Correct.** `30 7 * * 0,1,3,4,5,6` includes Thursday, seven hours before the 14:35 CT
+Melbourne kickoff. On 09-10 that sweep **did** fire and **failed `rc=1`**, along with research and
+the 18:30 lineup pass — the expired-OAuth outage. **No cadence change is needed, and the proposal is
+closed.** The lesson is about escalations: the agent inferred a runbook gap from inside a single
+run, where an outage two days wide is invisible. Taking it at face value would have bought a
+standing recurring cost to fix nothing.
+
+Every kickoff in the season was then checked against the schedule: **each one has a sweep ahead of
+it** (earliest real slots — Wed 19:00, Thu 12:00, Fri 12:00, Sat 16:00, Sun 12:00, Mon 19:15 CT).
+
+🔴 **That check surfaced a far worse bug.** ESPN gives flex-scheduled games a **placeholder** date:
+weeks **17 and 18** carry `startTimeTBD: true`, `validForLocking: false`, and the **same 02:01 CT
+Sunday timestamp for all 32 teams**. `game_locked` compared now against it, so from 02:01 on those
+Sundays **every player in the league would read as locked** — optimiser pins everyone, `set_lineup`
+refuses every move under §4.8, every waiver gain computes 0.0, for the whole week. **Playoff weeks
+here are 15–17: the system would have gone dark in the championship, and it would have looked
+exactly like a quiet week.** `ProGame.valid_for_locking` now carries ESPN's own word on whether a
+time is real; invalid means **not locked** (unknown fails open), while an official box score locks
+regardless of what its clock said. Verified live: wk17/18 no longer lock at 08:00 CT on
+championship Sunday, wk1/16 still do. `35107a1`.
+
 **2026-09-14 — Week 1 won 150.3–113.2. Two more rules, and the quiet weekend explained.**
 Every scheduled run since 09-12 completed `rc=0` and **wrote nothing** — no adds, no drops, no
 trades, no lineup changes. That was correct, and worth stating plainly because "nothing happened"
