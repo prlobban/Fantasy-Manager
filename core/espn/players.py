@@ -231,10 +231,17 @@ def load_pro_games(c: EspnClient | None = None) -> dict[str, dict[int, ProGame]]
             date = g.get("date")
             if not date:
                 continue
+            # `validForLocking` is ESPN's own statement that the kickoff is
+            # real; `startTimeTBD` says the opposite. Either one being wrong
+            # makes the date a placeholder, so both are consulted.
             weeks[int(wk)] = ProGame(
                 week=int(wk),
                 kickoff=datetime.fromtimestamp(int(date) / 1000, UTC),
                 stats_official=bool(g.get("statsOfficial")),
+                valid_for_locking=(
+                    bool(g.get("validForLocking", True))
+                    and not bool(g.get("startTimeTBD", False))
+                ),
             )
         out[abbrev] = weeks
     return out

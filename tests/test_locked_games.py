@@ -208,3 +208,46 @@ def test_an_add_cannot_gain_at_a_slot_that_is_already_locked():
         "the K slot is held by a player ESPN has locked; no add can score there "
         "this week, however big the projection gap looks"
     )
+
+
+# ── placeholder kickoffs ─────────────────────────────────────────────────────
+
+
+def tbd():
+    """A flex-scheduled game: ESPN gives a PLACEHOLDER date, not a kickoff.
+
+    Weeks 17 and 18 all carry `startTimeTBD: true`, `validForLocking: false`
+    and the same 02:01 CT Sunday timestamp for all 32 teams.
+    """
+    return ProGame(week=1, kickoff=NOW - timedelta(hours=6),
+                   stats_official=False, valid_for_locking=False)
+
+
+def test_a_placeholder_kickoff_never_locks():
+    """🔴 Found 2026-09-14. The placeholder date sits in the past all Sunday,
+    so trusting it marks every player on every team locked from 02:01 CT —
+    the lineup freezes, every move is refused and every waiver gain zeroes,
+    for the whole week. This league's playoff weeks are 15-17, so that is the
+    championship."""
+    assert pl(1, Pos.K, 9.0, game=tbd()).game_locked(1, NOW) is False
+
+
+def test_a_placeholder_game_still_locks_once_it_is_official():
+    """The box score is the authority. Once ESPN says the stats are final it
+    does not matter that the scheduled time was never real."""
+    g = ProGame(week=1, kickoff=NOW - timedelta(hours=6),
+                stats_official=True, valid_for_locking=False)
+    assert pl(1, Pos.K, 9.0, game=g).game_locked(1, NOW) is True
+
+
+def test_a_placeholder_player_keeps_his_projection():
+    """He is not locked, so he is valued on the forecast — not on an actual
+    score he has not had the chance to post."""
+    s = settings_k()
+    k = pl(10, Pos.K, 9.4, name="K", actual=None, game=tbd())
+    roster = [pl(1, Pos.QB, 20), pl(3, Pos.RB, 18), pl(4, Pos.RB, 14),
+              pl(6, Pos.WR, 17), pl(7, Pos.WR, 13), pl(9, Pos.TE, 11), k]
+    v = value_pool(roster, s, window="week", week=1, current_week=1)
+
+    assert v[k.espn_id].locked is False
+    assert v[k.espn_id].points == 9.4

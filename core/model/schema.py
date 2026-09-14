@@ -148,6 +148,14 @@ class ProGame(BaseModel):
     kickoff: datetime
     #: ESPN's own flag that the box score is final and official.
     stats_official: bool = False
+    #: 🔴 ESPN's flag that this kickoff time is REAL. Flex-scheduled games
+    #: (weeks 17 and 18, and any game awaiting a TV window) carry
+    #: `startTimeTBD: true`, `validForLocking: false`, and a PLACEHOLDER date —
+    #: every one of them reads 02:01 CT on the Sunday. Trusting that timestamp
+    #: would mark all 32 teams locked from 02:01, freeze the whole lineup and
+    #: zero every waiver gain, for the entire week. This league's playoff weeks
+    #: are 15-17, so that is the championship.
+    valid_for_locking: bool = True
 
 
 class Player(BaseModel):
@@ -191,8 +199,14 @@ class Player(BaseModel):
         g = self.games.get(week)
         if g is None:
             return False
+        # A finished game is finished whatever the schedule says.
         if g.stats_official:
             return True
+        # A placeholder kickoff is not a kickoff. Unknown means NOT locked:
+        # freezing a lineup on a made-up timestamp is far worse than letting a
+        # doomed move fail at the browser, which is now reported honestly.
+        if not g.valid_for_locking:
+            return False
         return (now or datetime.now(UTC)) >= g.kickoff
 
 
