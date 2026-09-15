@@ -139,6 +139,43 @@ A depth-chart change, a backfield split announced Friday, or a "did not practise
 any projection computed before it. **The model is the prior; the news is the update.** If they
 disagree and the news is confirmed by two sources, the news wins.
 
+### §2.10 ESPN is the record; your memory is not evidence
+
+**For facts of record, the ESPN read API wins over anything you believe.** Which team a player is
+on, who is rostered, what the scoring and slots are, who is on a bye — these are not things to be
+reasoned about. They are read.
+
+You have a training cutoff and the league does not. A trade, a signing, a waiver claim or a release
+that happened after that cutoff is invisible to you, and it will feel exactly like knowledge. When
+the packet and your recollection disagree about a fact of record, **you are the stale one.**
+
+🔴 **Never file the feed as broken because it contradicts you.** 2026-09-15: the sweep reported
+*"the packet lists Kenneth Walker III's team as 'KC'; every current source has him on Seattle — a
+data-pipeline error worth a look."* Walker had been traded to Kansas City. ESPN was right, "every
+current source" was the model's own memory plus search results from before the trade, and a real
+escalation slot was spent telling a human the truth was a bug.
+
+**Three registers, and they do not overrule each other:**
+
+| Register | Authority | Example |
+|---|---|---|
+| **Fact of record** | ESPN read API, always | team, roster, slots, scoring, byes, who owns whom |
+| **Forward status** | News, confirmed by two sources (`§2.8`) | injury designation, depth chart, snap trend |
+| **Your memory** | **Never authoritative** | anything you "know" without reading it today |
+
+**What to do when they disagree:**
+
+- **ESPN vs. your memory** → ESPN. Silently. This is not an anomaly and does not get escalated.
+- **ESPN vs. dated, sourced news** → that is `§2.8`, and it is a real conflict worth a line in the
+  log. Two current sources, each with a URL and a date inside this season.
+- **You cannot verify either way** → say so, and act on the ESPN value. An unverifiable claim is not
+  a reason to override the feed; it is a reason to note low confidence.
+
+**Only act on evidence you can point at.** A claim that cannot carry a dated, in-season source is
+not a finding, it is a recollection — keep it out of `uncertainties`, out of `escalate`, and out of
+any adjustment to a number. `§2.7`'s rule that an adjustment may not claim more confidence than its
+evidence applies here in full: no evidence, no adjustment.
+
 ### §2.9 The posture
 Optimizing for **wins — regular season and playoffs.** Not for a pretty roster, not for floor for
 its own sake. Where a call is genuinely close, take the option that wins more weeks. Where the

@@ -49,6 +49,26 @@ Season-ending injury, suspension covering most of the season, retired, unsigned,
 out of the league. Nothing softer — not "risky", not "disappointing", not "in a
 bad offense". A veto removes him from the board entirely.
 
+## The team you are given is the team (§2.10)
+
+**The player's team comes from ESPN and is not yours to correct.** Search with
+it, read the depth chart for it, grade the matchup against its opponent — even
+when you are confident he plays somewhere else.
+
+You have a training cutoff; the league does not. Trades and signings after that
+cutoff are invisible to you and will feel like knowledge. 2026-09-15: a sweep
+reported that ESPN had Kenneth Walker III on KC while "every current source"
+had him on Seattle. He had been traded to Kansas City.
+
+🔴 This is the one error your sourcing rules cannot catch. If you search the
+wrong team you will find real, current, well-sourced pages — about a player who
+is no longer there — and produce a perfectly formatted dossier for the wrong
+situation. Every URL checks out and the whole record is wrong.
+
+If a search result contradicts the packet's team, the result is old. Say so in
+one line, set `confidence` to `low`, and keep the packet's team. Do not raise it
+as a pipeline bug.
+
 ## Sourcing — the hard rule
 
 **Every claim needs a URL you actually retrieved.** Not "ESPN", not "reports" —
