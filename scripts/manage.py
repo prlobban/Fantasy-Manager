@@ -295,9 +295,54 @@ def main() -> int:
                 + (" · READ-ONLY" if read_only else "")
             notify("info", title, brief + "\n" + "\n".join(lines))
 
+    # 🔴 The run remembers itself. Without this every sweep starts cold and
+    # cannot tell "this is new" from "I did this seven minutes ago" — which on
+    # 2026-09-15 produced an escalation asking for a refund on a waiver claim
+    # the previous run had placed and explained, and the same "add_drop is
+    # broken" question three times in one afternoon.
+    _record_journal(st, task, args.task, out, decisions, names)
+
     if esc := (out.get("escalate") or "").strip():
         notify("warn", "Needs Pearce", esc[:600])
     return 0
+
+
+def _record_journal(st, task: str, scope: str, out: dict,
+                    decisions: list[dict], names: dict[int, str]) -> None:
+    """One journal entry per run: what was done, declined, escalated, left open.
+
+    `did` carries the OUTCOME, not just the intent. A waiver claim is recorded
+    as "pending" rather than "executed" so the next run reads an unchanged
+    roster as expected rather than as a failed write.
+    """
+    from core.state import journal
+
+    did = []
+    for d in decisions:
+        if d.get("kind") == "notify":
+            continue
+        if not d.get("executed"):
+            outcome = "refused" if (d.get("gate") or {}).get("refused_by") else "failed"
+        elif d.get("kind") == "waiver_claim":
+            outcome = "pending"  # ESPN processes claims on the next waiver run
+        else:
+            outcome = "executed"
+        did.append({
+            "what": _what(d, names),
+            "outcome": outcome,
+            "why": (d.get("reason") or "")[:200],
+        })
+
+    journal.record(
+        week=st.week,
+        task=task,
+        scope=scope,
+        summary=out.get("summary") or "",
+        did=did,
+        declined=out.get("no_action_reason") or "",
+        escalated=out.get("escalate") or "",
+        open_threads=out.get("uncertainties") or [],
+    )
 
 
 if __name__ == "__main__":

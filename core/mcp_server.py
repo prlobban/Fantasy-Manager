@@ -37,6 +37,17 @@ def _snap(refresh: bool = False) -> ls_mod.LeagueState:
     global _state
     if _state is None or refresh:
         _state = ls_mod.snapshot()
+        # Resolve any claim ESPN has now settled, BEFORE anything reasons about
+        # the roster or the add budget. A lost claim refunds its add here.
+        try:
+            from core.gates import rate_limits
+
+            for ch in rate_limits.reconcile(
+                {p.espn_id for p in _state.me.roster}, set(_state.on_waivers)
+            ):
+                log.info("waiver claim %s: %s", ch.get("add"), ch.get("outcome"))
+        except Exception as e:
+            log.warning("could not reconcile pending claims: %s", e)
     return _state
 
 
@@ -501,13 +512,30 @@ def get_trade_ideas() -> str:
 
 @mcp.tool()
 def get_rate_limits() -> str:
-    """What §6.1 and §6.8.10 currently allow."""
+    """What §5.7, §6.1 and §6.8.10 currently allow — including PENDING claims.
+
+    `pending_claims` are waiver claims already placed that ESPN has not
+    processed yet. They hold an add slot but are NOT on the roster, so a roster
+    read that does not show them is CORRECT and is not evidence of a failed
+    write. Do not escalate that as a broken transaction (§2.10 — read the
+    state, do not infer it).
+    """
+    from core.gates import rate_limits
     from core.state import store
 
     st = store.load()
+    pending = rate_limits.pending_adds()
     return _ok(
         proposals=st.get("trade_proposals", [])[-5:],
         accepts=st.get("trade_accepts", [])[-5:],
+        adds_used=rate_limits.adds_this_week(),
+        adds_left=rate_limits.adds_left(),
+        pending_claims=pending,
+        pending_note=(
+            f"{len(pending)} waiver claim(s) placed and awaiting ESPN's next "
+            "waiver run. They are not on the roster yet and that is expected; "
+            "a claim that loses is refunded automatically at the next sweep."
+        ) if pending else "no claims pending",
         kill_switch=kill_switch.state(),
     )
 
@@ -758,7 +786,12 @@ def add_drop(add_id: int, drop_id: int | None, reason: str, cites: list[str]) ->
     if gate.allowed and receipt:
         from core.gates import rate_limits
 
-        rate_limits.record_add(add_id, drop_id)
+        # A waiver claim is NOT on the roster yet — ESPN processes it on the
+        # next waiver run and it can still lose at priority 9 of 10. Recording
+        # it as a completed add is what made the 15:11 pass report a phantom
+        # write failure and ask for a refund.
+        rate_limits.record_add(add_id, drop_id,
+                               pending=(kind == ActionKind.WAIVER_CLAIM))
     return _ok(allowed=gate.allowed, refused_by=gate.refused_by,
                reason=gate.reason, error=err,
                receipt=str(receipt) if receipt else None)

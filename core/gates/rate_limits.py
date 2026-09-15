@@ -85,8 +85,63 @@ def record_rejection(by_team: int, give: list[int], get: list[int]) -> None:
 # ── roster adds (§5.7 — three a week, Pearce 2026-09-05) ─────────────────────
 
 
+#: A pending claim HOLDS an add slot — we have committed to it and cannot
+#: un-commit — but a LOST one must give it back (§5.3.1's logic, applied to the
+#: weekly cap rather than to priority).
+_SPENT = ("landed", "pending")
+
+
+def _add_rows() -> list[dict]:
+    return _recent(store.load().get("roster_adds") or [], 7)
+
+
 def adds_this_week() -> int:
-    return len(_recent(store.load().get("roster_adds") or [], 7))
+    """Adds that are spent: landed, plus claims still awaiting a waiver run.
+
+    Rows written before status existed have no `status` key and are counted as
+    landed — they are historical successes, not pending claims.
+    """
+    return sum(1 for r in _add_rows() if r.get("status", "landed") in _SPENT)
+
+
+def pending_adds() -> list[dict]:
+    """Waiver claims placed but not yet processed by ESPN."""
+    return [r for r in _add_rows() if r.get("status") == "pending"]
+
+
+def reconcile(rostered_ids, on_waivers_ids) -> list[dict]:
+    """Resolve pending claims against what ESPN now shows. Returns what changed.
+
+    Evidence, not a clock:
+      · on our roster            -> landed
+      · still on waivers         -> still pending, say nothing
+      · neither                  -> ESPN resolved him elsewhere; we LOST, and
+                                    the add is refunded
+
+    Called at the top of every sweep, so a run never reasons about a claim
+    whose fate is already knowable.
+    """
+    state = store.load()
+    rows = state.get("roster_adds") or []
+    changed: list[dict] = []
+    for r in rows:
+        if r.get("status") != "pending":
+            continue
+        add_id = r.get("add")
+        if add_id in rostered_ids:
+            r["status"] = "landed"
+            r["resolved_at"] = store.now_iso()
+            changed.append(dict(r, outcome="landed"))
+        elif add_id in on_waivers_ids:
+            continue  # still in the queue
+        else:
+            r["status"] = "lost"
+            r["resolved_at"] = store.now_iso()
+            changed.append(dict(r, outcome="lost"))
+    if changed:
+        state["roster_adds"] = rows
+        store.save(state)
+    return changed
 
 
 def adds_left() -> int:
@@ -104,9 +159,18 @@ def can_add() -> tuple[bool, str]:
     return True, f"§5.7 add {used + 1} of {cap} this week"
 
 
-def record_add(add_id: int, drop_id: int | None) -> None:
+def record_add(add_id: int, drop_id: int | None, *, pending: bool = False) -> None:
+    """Log a roster add. `pending=True` for a waiver CLAIM, which ESPN has not
+    processed yet and which may still lose to a higher priority.
+
+    The distinction is not cosmetic: without it a later run sees a spent add
+    against an unchanged roster and reports a write failure that did not happen
+    (2026-09-15), and a lost claim keeps costing one of the week's three adds
+    forever.
+    """
     store.append("roster_adds",
-                 {"at": store.now_iso(), "add": add_id, "drop": drop_id})
+                 {"at": store.now_iso(), "add": add_id, "drop": drop_id,
+                  "status": "pending" if pending else "landed"})
 
 
 def proposals_left() -> tuple[int, int]:
