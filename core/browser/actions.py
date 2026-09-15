@@ -94,7 +94,26 @@ def _need(page, *candidates: str, what: str, group: str | None = None):
     """
     if group:
         candidates = overrides.candidates(group, ",".join(candidates))
-    loc = S.first_present(page, *candidates)
+        # Resolve candidate-by-candidate so a match on a consent dialog can be
+        # skipped rather than returned. `first_present` alone would hand back
+        # OneTrust's hidden search box and the click would time out against an
+        # invisible element (2026-09-15).
+        from core.browser.selfheal import disqualified
+
+        loc = None
+        for cand in candidates:
+            try:
+                c = page.locator(cand)
+                if c.count() == 0:
+                    continue
+            except Exception:
+                continue
+            if disqualified(c):
+                continue
+            loc = c
+            break
+    else:
+        loc = S.first_present(page, *candidates)
     if loc is None:
         raise ActionFailed(
             f"could not find {what}"

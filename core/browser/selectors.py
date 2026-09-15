@@ -218,10 +218,16 @@ PLAYER_TABLE_ROW = "tr.Table__TR, table tbody tr, tr"
 #: The free-agent / players page search box. Like the draft room's, it filters
 #: on ENTER — typing alone leaves the table unfiltered while showing an
 #: autocomplete dropdown, which reads as "found nothing" to a row scan.
+#: ✅ VERIFIED 2026-09-15 on /football/players/add: ESPN's box is
+#: `input[placeholder='Player Name']`, and it is FIRST here deliberately. The
+#: old first candidate, `input[placeholder*='Search' i]`, matched OneTrust's
+#: hidden "Cookie list search" instead and sent a live waiver claim clicking an
+#: invisible element for twenty seconds. The generic candidates stay as
+#: fallbacks, but they are now explicitly scoped away from the consent manager.
 PLAYER_SEARCH = (
-    "input[placeholder*='Search' i], "
     "input[placeholder='Player Name'], "
-    "input[type=search]"
+    "input[placeholder*='Search' i]:not([id*='vendor']):not([aria-label*='cookie' i]), "
+    "input[type=search]:not([id*='vendor']):not([aria-label*='cookie' i])"
 )
 
 # ── trades ───────────────────────────────────────────────────────────────────

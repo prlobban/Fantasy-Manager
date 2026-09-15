@@ -289,3 +289,63 @@ def test_history_survives_a_corrupt_line(tmp_path, monkeypatch):
 def test_selector_group_names_are_valid_identifiers():
     for name in G.BY_NAME:
         assert re.fullmatch(r"[A-Z][A-Z0-9_]*", name), name
+
+
+# ── a match is not a correct match ───────────────────────────────────────────
+
+class _FakeLoc:
+    """Minimal stand-in for a Playwright locator's .first.evaluate()."""
+
+    def __init__(self, **attrs):
+        self._a = {"id": "", "cls": "", "aria": "", "name": "", "visible": True, **attrs}
+
+    @property
+    def first(self):
+        return self
+
+    def evaluate(self, _script):
+        return self._a
+
+
+def test_cookie_dialog_match_is_rejected():
+    """The 2026-09-15 live failure: PLAYER_SEARCH resolved to OneTrust's hidden
+    vendor search, so a waiver claim clicked an invisible element for 20s."""
+    loc = _FakeLoc(id="vendor-search-handler", aria="Cookie list search", visible=False)
+    why = SH.disqualified(loc)
+    assert why and "consent" in why.lower()
+
+
+def test_invisible_element_is_rejected():
+    assert SH.disqualified(_FakeLoc(id="real-thing", visible=False))
+
+
+def test_a_normal_element_is_accepted():
+    assert SH.disqualified(_FakeLoc(id="player-search", cls="form__control")) is None
+
+
+def test_disqualifier_fails_open_on_error():
+    """A DOM read that throws must not discard a working selector."""
+
+    class Boom:
+        @property
+        def first(self):
+            return self
+
+        def evaluate(self, _s):
+            raise RuntimeError("detached")
+
+    assert SH.disqualified(Boom()) is None
+
+
+def test_espn_player_search_is_the_first_candidate():
+    """Ordering is load-bearing: the generic Search candidate matched the
+    consent widget first and the chain never reached the real box."""
+    chain = [c.strip() for c in G.get("PLAYER_SEARCH").builtin.split(",")]
+    assert chain[0] == "input[placeholder='Player Name']"
+
+
+def test_generic_search_candidates_exclude_consent_widgets():
+    for cand in G.get("PLAYER_SEARCH").builtin.split(","):
+        if "placeholder='Player Name'" in cand:
+            continue
+        assert "vendor" in cand and "cookie" in cand.lower(), cand

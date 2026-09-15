@@ -118,6 +118,40 @@ class Report:
         return "\n".join(lines)
 
 
+#: Words that mark an element as belonging to a consent/cookie dialog rather
+#: than to the fantasy app. Shared by scoring AND resolution — see module docs.
+DISQUALIFYING = ("onetrust", "save-preference", "consent", "cookie", "optanon",
+                 "vendor-search", "ot-group", "did-ui", "disneyid")
+
+
+def disqualified(loc) -> str | None:
+    """Why this matched element is not the one we want, or None if it is fine.
+
+    Fails OPEN on an error: if we cannot inspect the element we do not reject
+    it, because a probe that throws away working selectors on a transient DOM
+    read is worse than one that occasionally accepts a bad one.
+    """
+    try:
+        a = loc.first.evaluate(
+            """e => ({
+                id: e.getAttribute('id') || '',
+                cls: e.getAttribute('class') || '',
+                aria: e.getAttribute('aria-label') || '',
+                name: e.getAttribute('name') || '',
+                visible: !!(e.offsetWidth || e.offsetHeight || e.getClientRects().length)
+            })"""
+        )
+    except Exception:
+        return None
+    hay = f"{a.get('id', '')} {a.get('cls', '')} {a.get('aria', '')} {a.get('name', '')}".lower()
+    for bad in DISQUALIFYING:
+        if bad in hay:
+            return f"consent/overlay widget ({bad!r} in {hay.strip()[:60]!r})"
+    if not a.get("visible"):
+        return "element is not visible — no click can reach it"
+    return None
+
+
 # ── probe ────────────────────────────────────────────────────────────────────
 
 
@@ -137,12 +171,23 @@ def probe_group(page, g: G.Group) -> Probe:
 
     for cand in chain:
         try:
-            n = page.locator(cand).count()
+            loc = page.locator(cand)
+            n = loc.count()
         except Exception:
             continue  # an invalid selector is a dead candidate, not a crash
-        if n:
-            healing_log.note_winner(g.name, cand)
-            return Probe(g.name, cand, n, g.optional, g.note, healed=(cand == healed))
+        if not n:
+            continue
+        # 🔴 Matching is not being right. A candidate that resolves to a consent
+        # dialog or to something invisible is REJECTED so the chain falls
+        # through to the next one — which is how PLAYER_SEARCH reaches ESPN's
+        # real `input[placeholder='Player Name']` instead of stopping at
+        # OneTrust's hidden vendor search (2026-09-15).
+        why = disqualified(loc)
+        if why:
+            log.info("rejecting %s for %s: %s", cand, g.name, why)
+            continue
+        healing_log.note_winner(g.name, cand)
+        return Probe(g.name, cand, n, g.optional, g.note, healed=(cand == healed))
     return Probe(g.name, None, 0, g.optional, g.note)
 
 
