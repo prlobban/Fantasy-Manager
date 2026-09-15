@@ -339,9 +339,13 @@ def research_player(espn_id: int, question: str = "") -> str:
 def get_lessons() -> str:
     """What this system has learned on previous Tuesdays (D7). A lesson that
     applies today is cited like a rule."""
+    from core.browser import healing_log
     from core.state import lessons
 
-    return _ok(lessons=lessons.read())
+    # The browser layer learns too, and its lessons are the ones most likely to
+    # be invisible: a heal fixes the symptom silently, so without this the same
+    # group can break every other week and never reach the review.
+    return _ok(lessons=lessons.read(), selector_lessons=healing_log.review_notes())
 
 
 def _offers(s: ls_mod.LeagueState):
@@ -914,6 +918,72 @@ def accept_trade(offer_id: str, reason: str, cites: list[str]) -> str:
     return _ok(allowed=gate.allowed, refused_by=gate.refused_by, reason=gate.reason,
                gauntlet_failed_on=result.failed_on,
                receipt=str(receipt) if receipt else None)
+
+
+@mcp.tool()
+def probe_selectors(target: str = "team") -> str:
+    """Check whether the browser selectors still resolve on a live ESPN page.
+
+    READ-ONLY — opens a page, tries every selector for that page, clicks
+    nothing. `target` is one of: team, add, trade, draft.
+
+    Run this when a write fails with "could not find ...". It tells you whether
+    the cause is a stale selector (groups reporting DEAD) or something else
+    entirely (the page would not load, the session is logged out). A group
+    showing `----` is optional and its absence is normal — do not report those
+    as broken.
+    """
+    from core.browser import groups as G
+    from core.browser import selfheal
+
+    if target not in (G.TEAM, G.ADD, G.TRADE, G.DRAFT):
+        return _ok(ok=False, reason=f"unknown target {target!r}; use team/add/trade/draft")
+    try:
+        rep, _ = selfheal.run(target, heal=False)
+    except Exception as e:
+        return _ok(ok=False, target=target, reason=f"could not open the {target} page: {e}")
+    return _ok(
+        ok=rep.healthy,
+        target=target,
+        broken=[p.group for p in rep.broken],
+        report=rep.text(),
+        dom=rep.dom,
+    )
+
+
+@mcp.tool()
+def heal_selectors(target: str = "team") -> str:
+    """Re-point any stale selector on `target`, verify it, and commit it.
+
+    This is the repair, and it WRITES to the repo (core/browser/overrides.json)
+    though never to the league. For each broken group it scans the page for the
+    element that group should match, scores the candidates, writes the winner,
+    then re-probes to prove it resolves — an unverified candidate is rolled back
+    rather than kept.
+
+    Two things it will not do, by design (§10.6): it never clicks an element to
+    find out what it does, and it refuses to heal the groups whose write cannot
+    be reversed — the draft pick button and the trade send/accept buttons. If
+    one of those is stale, say so plainly and escalate; do not work around it.
+    """
+    from core.browser import groups as G
+    from core.browser import selfheal
+
+    if target not in (G.TEAM, G.ADD, G.TRADE, G.DRAFT):
+        return _ok(ok=False, reason=f"unknown target {target!r}; use team/add/trade/draft")
+    try:
+        rep, heals = selfheal.run(target, heal=True)
+    except Exception as e:
+        return _ok(ok=False, target=target, reason=f"could not open the {target} page: {e}")
+    return _ok(
+        ok=rep.healthy,
+        target=target,
+        healed=[{"group": h.group, "candidate": h.candidate, "why": h.why}
+                for h in heals if h.healed],
+        unhealed=[{"group": h.group, "why": h.why} for h in heals if not h.healed],
+        still_broken=[p.group for p in rep.broken],
+        report=rep.text(),
+    )
 
 
 @mcp.tool()

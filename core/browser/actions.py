@@ -20,6 +20,7 @@ import logging
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
+from core.browser import overrides
 from core.browser import selectors as S
 from core.browser.session import EspnSession
 
@@ -27,7 +28,17 @@ log = logging.getLogger(__name__)
 
 
 class ActionFailed(RuntimeError):
-    """A write could not be completed. Never swallowed — the gate logs it."""
+    """A write could not be completed. Never swallowed — the gate logs it.
+
+    `group` names the selectors.py constant that could not be resolved, when the
+    failure was a selector failure. That single field is what lets write_gate
+    tell "ESPN moved a class name" apart from "the network died" and run a
+    targeted heal instead of asking a human to go looking (2026-09-14).
+    """
+
+    def __init__(self, message: str, *, group: str | None = None) -> None:
+        super().__init__(message)
+        self.group = group
 
 
 class PartialWrite(ActionFailed):
@@ -44,8 +55,9 @@ class PartialWrite(ActionFailed):
     reads `.receipt` off this and records `executed=True` with the reason.
     """
 
-    def __init__(self, message: str, *, receipt: Receipt | None = None) -> None:
-        super().__init__(message)
+    def __init__(self, message: str, *, receipt: Receipt | None = None,
+                 group: str | None = None) -> None:
+        super().__init__(message, group=group)
         self.receipt = receipt
 
 
@@ -73,12 +85,22 @@ def _receipt(s: EspnSession, action: str, detail: str, *, verified: bool) -> Rec
     )
 
 
-def _need(page, *candidates: str, what: str):
+def _need(page, *candidates: str, what: str, group: str | None = None):
+    """The first candidate that resolves, or a failure that names the group.
+
+    When `group` is given the HEALED candidate is tried first — that is how a
+    self-heal written during one action takes effect in every other action
+    without a restart.
+    """
+    if group:
+        candidates = overrides.candidates(group, ",".join(candidates))
     loc = S.first_present(page, *candidates)
     if loc is None:
         raise ActionFailed(
-            f"could not find {what}. Selectors are in core/browser/selectors.py; "
-            "run scripts/discover_selectors.py against a live page to re-point them."
+            f"could not find {what}"
+            + (f" [{group}]" if group else "")
+            + ". Selectors are in core/browser/selectors.py.",
+            group=group,
         )
     return loc
 
@@ -86,15 +108,19 @@ def _need(page, *candidates: str, what: str):
 # ── draft ────────────────────────────────────────────────────────────────────
 
 
-def _need_in_row(page, name: str, *candidates: str, what: str):
+def _need_in_row(page, name: str, *candidates: str, what: str,
+                 group: str | None = None):
     """A button that sits in a row carrying `name`. Fails closed: a click that
     cannot be tied to the intended player is not attempted at all."""
+    if group:
+        candidates = overrides.candidates(group, ",".join(candidates))
     loc = S.in_row_with(page, name, *candidates)
     if loc is None:
         raise ActionFailed(
-            f"could not find {what} in a row containing {name!r}. Either the "
-            "search did not narrow to him or the selectors are stale — see "
-            "core/browser/selectors.py and scripts/discover_selectors.py."
+            f"could not find {what} in a row containing {name!r}"
+            + (f" [{group}]" if group else "")
+            + ". Either the search did not narrow to him or the selectors are stale.",
+            group=group,
         )
     return loc
 
@@ -381,7 +407,8 @@ def add_drop(s: EspnSession, league_id: int, season: int,
     page = s.goto(f"/football/players/add?leagueId={league_id}&seasonId={season}")
     s.dismiss_overlays()
 
-    box = _need(page, S.PLAYER_SEARCH, S.DRAFT_SEARCH, what="the player search box")
+    box = _need(page, S.PLAYER_SEARCH, S.DRAFT_SEARCH, what="the player search box",
+                group="PLAYER_SEARCH")
     box.first.fill(add_name)
     page.wait_for_timeout(600)
     # The table filters on ENTER. Typing alone leaves the full free-agent list
@@ -391,7 +418,8 @@ def add_drop(s: EspnSession, league_id: int, season: int,
     box.first.press("Enter")
     page.wait_for_timeout(2500)
 
-    btn = _need_in_row(page, add_name, S.ADD_PLAYER_BUTTON, what="an Add/Claim button")
+    btn = _need_in_row(page, add_name, S.ADD_PLAYER_BUTTON, what="an Add/Claim button",
+                       group="ADD_PLAYER_BUTTON")
     btn.first.click()
     page.wait_for_timeout(2000)
 
@@ -438,7 +466,8 @@ def add_drop(s: EspnSession, league_id: int, season: int,
         d.first.click()
         page.wait_for_timeout(800)
 
-    confirm = _need(page, S.CONFIRM_BUTTON, what="the Continue/Confirm button")
+    confirm = _need(page, S.CONFIRM_BUTTON, what="the Continue/Confirm button",
+                    group="CONFIRM_BUTTON")
     if confirm.first.is_disabled():
         raise ActionFailed(
             "Continue is still disabled after selecting the drop — ESPN has not "
@@ -472,7 +501,8 @@ def drop_player(s: EspnSession, league_id: int, team_id: int, season: int,
     )
     s.dismiss_overlays()
 
-    toolbar = _need(page, S.TEAM_DROP_TOOLBAR, what="the team page's Drop button")
+    toolbar = _need(page, S.TEAM_DROP_TOOLBAR, what="the team page's Drop button",
+                    group="TEAM_DROP_TOOLBAR")
     toolbar.first.click()
     page.wait_for_timeout(2000)
 
@@ -490,7 +520,8 @@ def drop_player(s: EspnSession, league_id: int, team_id: int, season: int,
     d.first.click()
     page.wait_for_timeout(1000)
 
-    confirm = _need(page, S.CONFIRM_BUTTON, what="the drop Continue/Confirm button")
+    confirm = _need(page, S.CONFIRM_BUTTON, what="the drop Continue/Confirm button",
+                    group="CONFIRM_BUTTON")
     if confirm.first.is_disabled():
         raise ActionFailed(
             f"Continue is still disabled after selecting {drop_name!r} — ESPN has "
@@ -555,7 +586,8 @@ def propose_trade(s: EspnSession, league_id: int, season: int, to_team_id: int,
     )
     s.dismiss_overlays()
 
-    start = _need(page, S.TRADE_PROPOSE_BUTTON, what="the Propose Trade button")
+    start = _need(page, S.TRADE_PROPOSE_BUTTON, what="the Propose Trade button",
+                  group="TRADE_PROPOSE_BUTTON")
     start.first.click()
     page.wait_for_timeout(1500)
 
@@ -577,10 +609,12 @@ def propose_trade(s: EspnSession, league_id: int, season: int, to_team_id: int,
     for pid, name in get:
         _tick(pid, name)
 
-    review = _need(page, S.TRADE_REVIEW_BUTTON, what="the Review Trade button")
+    review = _need(page, S.TRADE_REVIEW_BUTTON, what="the Review Trade button",
+                   group="TRADE_REVIEW_BUTTON")
     review.first.click()
     page.wait_for_timeout(1200)
-    send = _need(page, S.TRADE_SEND_BUTTON, what="the Send Trade button")
+    send = _need(page, S.TRADE_SEND_BUTTON, what="the Send Trade button",
+                 group="TRADE_SEND_BUTTON")
     send.first.click()
     page.wait_for_timeout(2500)
 
