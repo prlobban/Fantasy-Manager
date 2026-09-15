@@ -299,10 +299,62 @@ def set_lineup(s: EspnSession, league_id: int, team_id: int, season: int,
     # The banner is ESPN's own confirmation. Absent it, the caller re-reads the
     # roster off the API before claiming anything (§10.6).
     saved = _move_saved(page)
+
+    # 🔴 Re-read the page and check WHERE each player ended up. The banner only
+    # proves a move committed, not that it was the move we asked for: on
+    # 2026-09-15 two writes reported "1/1 applied [verified]" for swaps that
+    # left RB2 empty. A receipt that cannot tell those apart is the §10.6
+    # silent degraded mode, and it cost most of a matchup.
+    misplaced = _verify_slots(page, moves, names)
+    detail = f"{applied}/{len(moves)} moves applied"
+    if misplaced:
+        detail += " — NOT in the intended slot: " + ", ".join(misplaced)
     return _receipt(
-        s, "set lineup", f"{applied}/{len(moves)} moves applied",
-        verified=applied == len(moves) and saved,
+        s, "set lineup", detail,
+        verified=applied == len(moves) and saved and not misplaced,
     )
+
+
+def _verify_slots(page, moves, names) -> list[str]:
+    """Which of `moves` did NOT end with the player in the slot asked for.
+
+    Reads the rendered page rather than the API: the API is a separate,
+    eventually-consistent read, and the question here is narrow — did the
+    clicks we just made land where we aimed them.
+
+    Unreadable rows are reported as misplaced, not skipped. An unverifiable
+    write is exactly the thing that must not be called verified.
+    """
+    import re as _re
+
+    out: list[str] = []
+    try:
+        rows = page.locator(S.LINEUP_SLOT_ROW)
+        texts = []
+        for i in range(rows.count()):
+            try:
+                texts.append(" ".join((rows.nth(i).inner_text() or "").split()))
+            except Exception:
+                continue
+    except Exception as e:
+        log.warning("could not re-read the lineup to verify: %s", e)
+        return [f"{names.get(i, i)}->{sl}" for i, sl in moves]
+
+    for espn_id, slot in moves:
+        name = (names or {}).get(espn_id)
+        if not name:
+            out.append(f"{espn_id}->{slot} (no name to verify by)")
+            continue
+        # The row that carries this player, and the slot label it starts with.
+        row = next((t for t in texts if name.lower() in t.lower()), None)
+        if row is None:
+            out.append(f"{name}->{slot} (no row found)")
+            continue
+        if not any(_re.match(rf"\s*{_re.escape(lbl)}\b", row, _re.I)
+                   for lbl in S.slot_labels(slot)):
+            actual = row.split()[0] if row.split() else "?"
+            out.append(f"{name}->{slot} (is in {actual})")
+    return out
 
 
 def _visible_save(page):
@@ -362,6 +414,7 @@ def _slot_row_with_here(page, slot: str):
     n = rows.count()
     for candidate in S.slot_labels(slot):
         label = re.compile(rf"^\s*{re.escape(candidate)}\b", re.I)
+        occupied = None
         for i in range(n):
             try:
                 r = rows.nth(i)
@@ -369,11 +422,35 @@ def _slot_row_with_here(page, slot: str):
                 if not label.search(text):
                     continue
                 here = r.locator(S.LINEUP_HERE_BUTTON)
-                if here.count() > 0:
+                if here.count() == 0:
+                    continue
+                # 🔴 An EMPTY row of this slot wins over an occupied one.
+                # 2026-09-15: RB rendered twice — Etienne, then "RB | Empty" —
+                # and taking the first match swapped the two backs on every
+                # sweep while RB2 stayed vacant and we fielded eight starters.
+                # Swapping into a filled slot is a legitimate operation; it is
+                # just never the one you want while a slot of that name is
+                # sitting open.
+                if _row_is_empty(text):
                     return here
+                if occupied is None:
+                    occupied = here
             except Exception:
                 continue
+        if occupied is not None:
+            return occupied
     return None
+
+
+def _row_is_empty(text: str) -> bool:
+    """Whether a lineup row is a vacant slot rather than a player.
+
+    ESPN prints the literal word in the player cell of an unfilled slot:
+    "RB | Empty | -- | --".
+    """
+    import re as _re
+
+    return bool(_re.search(r"\bEmpty\b", text or "", _re.I))
 
 
 def _row_for_player(page, espn_id: int, name: str | None = None):

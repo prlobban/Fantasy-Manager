@@ -349,3 +349,84 @@ def test_generic_search_candidates_exclude_consent_widgets():
         if "placeholder='Player Name'" in cand:
             continue
         assert "vendor" in cand and "cookie" in cand.lower(), cand
+
+
+# ── the empty slot (2026-09-15: we fielded eight starters) ───────────────────
+
+def test_empty_row_is_recognised():
+    from core.browser.actions import _row_is_empty
+
+    assert _row_is_empty("RB | Empty | -- | -- | --")
+    assert _row_is_empty("IR 	 Empty 	 --")
+    assert not _row_is_empty("RB | Travis Etienne Jr. | NO | RB | MOVE")
+    assert not _row_is_empty("Bench | Chuba Hubbard | CAR | RB | MOVE")
+
+
+def test_a_player_named_like_the_word_is_not_an_empty_row():
+    """Word-boundary, not substring: a row is not empty because someone's
+    name contains the letters."""
+    from core.browser.actions import _row_is_empty
+
+    assert not _row_is_empty("WR | Emptyman Jones | NYJ | WR | MOVE")
+
+
+def test_verify_slots_flags_a_swap(monkeypatch):
+    """The exact 2026-09-15 lie: 1/1 applied [verified] while RB2 stayed empty."""
+    from core.browser import actions
+
+    rendered = [
+        "RB Travis Etienne Jr. NO RB MOVE",
+        "RB Empty -- --",
+        "Bench Chuba Hubbard CAR RB MOVE",
+    ]
+
+    class _Rows:
+        def count(self):
+            return len(rendered)
+
+        def nth(self, i):
+            class _R:
+                def inner_text(_self):
+                    return rendered[i]
+            return _R()
+
+    class _Page:
+        def locator(self, _sel):
+            return _Rows()
+
+    bad = actions._verify_slots(_Page(), [(1, "RB")], {1: "Chuba Hubbard"})
+    assert bad and "Chuba Hubbard" in bad[0]
+
+
+def test_verify_slots_passes_a_real_move():
+    from core.browser import actions
+
+    rendered = ["RB Chuba Hubbard CAR RB MOVE", "RB Travis Etienne Jr. NO RB MOVE"]
+
+    class _Rows:
+        def count(self):
+            return len(rendered)
+
+        def nth(self, i):
+            class _R:
+                def inner_text(_self):
+                    return rendered[i]
+            return _R()
+
+    class _Page:
+        def locator(self, _sel):
+            return _Rows()
+
+    assert actions._verify_slots(_Page(), [(1, "RB")], {1: "Chuba Hubbard"}) == []
+
+
+def test_unverifiable_move_counts_as_misplaced():
+    """§10.6 — a write we cannot check is never reported as verified."""
+    from core.browser import actions
+
+    class _Page:
+        def locator(self, _sel):
+            raise RuntimeError("page gone")
+
+    bad = actions._verify_slots(_Page(), [(1, "RB")], {1: "Chuba Hubbard"})
+    assert len(bad) == 1
