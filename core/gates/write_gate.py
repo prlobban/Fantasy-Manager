@@ -19,8 +19,9 @@ from collections.abc import Callable
 from typing import Any
 
 from core.espn import health
-from core.gates import kill_switch, rate_limits
+from core.gates import kill_switch, rate_limits, recover
 from core.model.schema import Action, ActionKind, GateResult
+from core.notify import notify
 from core.state import decisions
 
 log = logging.getLogger(__name__)
@@ -156,6 +157,40 @@ def execute(
     try:
         receipt = performer()
     except Exception as e:
+        # 🔴 SELF-HEAL (2026-09-14). A write that failed because ESPN moved a
+        # class name is not a failure, it is a stale selector — and the old
+        # response to that was a Slack message asking a human to run a script,
+        # which cost the Buccaneers D/ST claim and about 4 points when the
+        # human did not see it before kickoff.
+        #
+        # `recover` re-points the selector and re-runs the SAME performer. It
+        # refuses on anything it cannot prove is safe: a partial write, a group
+        # whose write has no reverse, or an add whose roster read shows it
+        # already landed. A refusal falls through to the original failure path
+        # below, unchanged — the recovery attempt can never make things worse
+        # than not attempting it.
+        healed = None
+        try:
+            healed, receipt = recover.recover(action, e, performer)
+        except recover.RecoveryRefused as why:
+            log.info("no self-heal for %s: %s", action.kind.value, why)
+        except Exception as heal_err:
+            log.error("self-heal for %s itself failed: %s", action.kind.value, heal_err)
+        if healed is not None:
+            extra["self_heal"] = {"group": healed.group, "candidate": healed.candidate,
+                                  "why": healed.why}
+            decisions.record(action.kind, cites=action.cites, reason=action.reason,
+                             predicted=predicted, alternative=alternative,
+                             executed=True, gate=gate,
+                             receipt=str(receipt) if receipt else None, extra=extra)
+            log.warning("EXECUTED %s after self-heal of %s — %s",
+                        action.kind.value, healed.group, action.reason)
+            notify("warn", f"Self-healed {healed.group}",
+                   f"{action.kind.value} failed on a stale selector, re-pointed it to "
+                   f"`{healed.candidate}` ({healed.why}) and the write then succeeded. "
+                   "No action needed — the override is committed on the box.")
+            return gate, receipt
+
         # 🔴 A write can fail AFTER part of it has committed on ESPN. On
         # 2026-09-12 an add landed, the drop leg failed, and this recorded the
         # whole thing as executed=False — so the roster held two defences and
