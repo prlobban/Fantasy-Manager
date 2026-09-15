@@ -1,0 +1,16 @@
+{
+  "ADD_PLAYER_BUTTON": {
+    "at": "2026-09-15T14:42:19+00:00",
+    "candidate": "button[title='Claim' i]",
+    "replaces": "button.add-action-btn, button[title='Add' i], button[aria-label^='Add ' i], button:has-text('Add'), button:has-text('Claim')",
+    "verified": true,
+    "why": "score 2.8: title='Claim', aria='Claim Brock Purdy Quarterback for San Francisco 49ers', class='Button Button--sm Button--default Button--custom claim-action-btn mh2'"
+  },
+  "TEAM_DROP_TOOLBAR": {
+    "at": "2026-09-15T14:46:16+00:00",
+    "candidate": "button.action-buttons",
+    "replaces": "button:text-is('Drop'):not(.drop-action-btn), a[role=button]:text-is('Drop'):not(.drop-action-btn)",
+    "verified": true,
+    "why": "score 2.8: text='Drop', class='Button Button--alt Button--custom ml4 action-buttons'"
+  }
+}
