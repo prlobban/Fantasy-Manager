@@ -184,7 +184,12 @@ def read(since: str | None = None) -> Inbox:
         # today and a lexical compare happens to work, which is exactly the
         # kind of accident that breaks silently later.
         since_f = float(last or 0)
-        oldest = min(since_f or 0.0, time.time() - THREAD_LOOKBACK_S)
+        # The lookback floor is how far back thread parents are worth finding.
+        # On a fresh cursor it IS the window — `min(0, floor)` asked Slack for
+        # oldest=0, which it rejects outright, and would have dredged the whole
+        # channel if it had not.
+        floor = time.time() - THREAD_LOOKBACK_S
+        oldest = min(since_f, floor) if since_f > 0 else floor
         hist = _call("conversations.history", token,
                      channel=cfg.slack_channel_id, oldest=f"{oldest:.6f}", limit=100)
         if not hist.get("ok"):

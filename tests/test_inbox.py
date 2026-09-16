@@ -136,3 +136,31 @@ def test_a_corrupt_cursor_reads_fresh_rather_than_crashing(tmp_path, monkeypatch
     p.write_text("{not json", encoding="utf-8")
     monkeypatch.setattr(inbox, "_state_path", lambda: p)
     assert inbox.cursor() == "0"
+
+
+def test_a_fresh_cursor_asks_for_the_lookback_window_not_zero(monkeypatch):
+    # Slack rejects oldest=0 outright (invalid_ts_oldest), and if it did not,
+    # a first run would have dredged the entire channel. Caught on the box.
+    seen = {}
+
+    def fake(method, token, **params):
+        seen[method] = params
+        return {"ok": True, "messages": []}
+
+    monkeypatch.setattr(inbox, "_call", fake)
+    inbox.read(since="0")
+    assert float(seen["conversations.history"]["oldest"]) > 0
+
+
+def test_an_old_cursor_wins_over_the_lookback_floor(monkeypatch):
+    # A cursor older than the floor must still be honoured, or a run that was
+    # down for three days silently drops what he said on day one.
+    seen = {}
+
+    def fake(method, token, **params):
+        seen[method] = params
+        return {"ok": True, "messages": []}
+
+    monkeypatch.setattr(inbox, "_call", fake)
+    inbox.read(since="1000.0")
+    assert float(seen["conversations.history"]["oldest"]) == 1000.0
