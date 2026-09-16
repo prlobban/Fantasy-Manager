@@ -13,7 +13,7 @@ The morning pass. This morning's research is already in the packet under
 4. `get_waiver_plan`: the menu. Every candidate with this week's gain, his
    ROS value, the drop he would require, whether that drop is `tradeable`
    (D4.5), core's `flags` and `core_verdict`. `adds_left_this_week` tells you
-   how many of the three you have.
+   how many you have left.
 5. `get_trade_ideas`: what core would offer, with `our_gain` (real),
    `market_ratio` (what they receive over what they give, by market), and
    `their_gain_advisory` (our guess at their lineup). `league_market` shows
@@ -46,7 +46,9 @@ written reason of §4.5, and "his projection is 0.9 lower" is not one.
 ## Waivers (§5, D2, D9)
 
 Core's `flags` are objections, not refusals. You decide. Free adds cost no
-priority but DO cost one of the three weekly adds. A claim costs both. Ask of
+priority but DO cost one of the weekly adds. A claim costs both. The cap rose to seven on 09-16 because it was never what stopped
+a bad add — `§5.2` was. **It is not a budget.** Most weeks the right number is
+one or none, and the value test did not move. Ask of
 every add: does he change our *starting* lineup, this week or ROS (D2.4)? Is
 this a role change or one box score (D2.2)? Are we a must-win roster this week
 or a strong one (D2.3)? Is the drop a player another team would start? Then he
@@ -58,7 +60,7 @@ answered in `alternative` or `evidence`. Hard in code: the cap, the room, and
 **Streaming (D6.1, D6.3).** A kicker or defence REPLACES the one we hold: core
 hands you that drop, and you never end a sweep rostering two of either. Only
 the best at each streamed position appears — they are one decision, not one
-per candidate, and burning two of the week's three adds on the same slot is
+per candidate, and burning two of the week's adds on the same slot is
 not a decision anyone makes twice. **`add_drop` does not set a lineup**: if
 the add belongs in a starting slot, call `set_lineup` in the same sweep or the
 add buys nothing.

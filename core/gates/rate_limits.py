@@ -67,11 +67,64 @@ def can_propose(to_team: int, give: list[int], get: list[int]) -> tuple[bool, st
 
 
 def record_proposal(to_team: int, give: list[int], get: list[int]) -> None:
+    # `give` and `get` are recorded, not just hashed, because the hash cannot
+    # be un-hashed and settle_proposals needs to know who was in the offer to
+    # tell an accepted one from an open one. Added 2026-09-16; entries written
+    # before that date carry no ids and can only age out.
     store.append(
         "trade_proposals",
         {"at": store.now_iso(), "to_team": to_team,
-         "offer_hash": offer_hash(give, get, to_team)},
+         "offer_hash": offer_hash(give, get, to_team),
+         "give": list(give), "get": list(get)},
     )
+
+
+def settle_proposals(our_roster_ids: set[int]) -> list[dict]:
+    """§6.1 — close the offers that are no longer open. Returns what closed.
+
+    An offer the other manager ACCEPTED used to look identical to one still
+    sitting in their inbox: `can_propose` only asked "did we propose to this
+    team in the last 14 days?", so a completed trade kept that manager blocked
+    for the remainder of the fortnight. It cost eight days on 2026-09-08 —
+    the Pitts-for-Garrett-Wilson deal went through, Wilson was on our roster,
+    and every sweep since refused the best idea on the board because team 9
+    was "already outstanding."
+
+    The signal is our own roster: if every player we asked to GET is ours, the
+    offer was accepted. That is deliberately the strict test. A half-match
+    means something we do not understand happened, and the safe reading of a
+    confusing trade ledger is that the offer is still live — proposing twice
+    to the same manager is worse than waiting out the fortnight.
+
+    A rejected or expired offer still cannot be detected and still ages out at
+    14 days; ESPN does not expose pending outgoing offers to the read API.
+    """
+    if not our_roster_ids:
+        return []
+    s = store.load()
+    proposals = s.get("trade_proposals") or []
+    closed, kept = [], []
+    for e in proposals:
+        want = e.get("get")
+        if want and all(int(i) in our_roster_ids for i in want):
+            closed.append({**e, "closed_at": store.now_iso(), "outcome": "accepted"})
+        else:
+            kept.append(e)
+    if closed:
+        s["trade_proposals"] = kept
+        s["trade_settlements"] = (s.get("trade_settlements") or []) + closed
+        store.save(s)
+    return closed
+
+
+def unverifiable_proposals() -> list[dict]:
+    """Open proposals with no player ids — written before 2026-09-16.
+
+    They cannot be settled, only waited out. Surfaced rather than swallowed so
+    a block that will never resolve on its own is at least visible.
+    """
+    return [e for e in _recent(store.load().get("trade_proposals") or [], 14)
+            if not e.get("get")]
 
 
 def record_rejection(by_team: int, give: list[int], get: list[int]) -> None:

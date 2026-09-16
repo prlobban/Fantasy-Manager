@@ -23,6 +23,7 @@ _DEFAULT: dict[str, Any] = {
     "trade_proposals": [],      # [{"at": iso, "to_team": int, "offer_hash": str}]
     "trade_rejections": [],     # [{"at": iso, "by_team": int, "offer_hash": str}]
     "trade_accepts": [],        # [{"at": iso, "offer_id": str}]
+    "trade_settlements": [],    # §6.1 — outgoing offers observed to have closed
     "offers_first_seen": {},    # offer_id -> iso, for the §6.8.9 cool-down
     "roster_adds": [],          # [{"at": iso, "add": int, "drop": int|None}] — §5.7 cap
     "last_review_week": None,   # the last week the Tuesday review graded

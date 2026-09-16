@@ -307,7 +307,12 @@ trades:
 season:
   # §5.7 — roster adds (waiver claims + free-agent adds) per rolling 7 days.
   # Pearce, 09-05: "three a week max, so it is forced to actually think."
-  max_adds_per_week: 3
+  # Raised to 7 by Pearce, 2026-09-16. The cap was doing a job §5.2 already
+  # does better: on 09-16 all three adds were spent and every candidate on the
+  # menu still graded +0.0/wk, so the binding constraint was never the count.
+  # A cap that bites before the value test is a cap that blocks the Jordan
+  # Mason add and lets the Sam Darnold one through on a different week.
+  max_adds_per_week: 7
 
   # D4.5 — a droppable player with at least this much ROS VOR is trade
   # capital, not a drop. The sweep must try a trade first unless the add is

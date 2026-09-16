@@ -154,14 +154,19 @@ def test_adds_left_caps_the_plan(monkeypatch):
     assert plan.adds_left == 1
 
 
-def test_the_gate_refuses_a_fourth_add(tmp_path, monkeypatch):
+def test_the_gate_refuses_the_add_past_the_cap(tmp_path, monkeypatch):
+    # Reads the cap rather than hardcoding it: it moved 3 -> 7 on 2026-09-16
+    # and the rule under test is "the one past the cap is refused", not "the
+    # fourth is refused".
     from core.gates import rate_limits, write_gate
+    from core.model.priors import priors
     from core.model.schema import Action, ActionKind
     from core.state import store
 
     monkeypatch.setattr(store, "_path", lambda: tmp_path / "state.json")
     monkeypatch.setattr(write_gate.kill_switch, "is_on", lambda: True)
-    for i in range(3):
+    cap = int(priors().get("season.max_adds_per_week"))
+    for i in range(cap):
         rate_limits.record_add(100 + i, None)
     assert rate_limits.adds_left() == 0
     a = Action(kind=ActionKind.ADD_DROP, args={"add": 1, "drop": 2, "roster_has_room": False},
@@ -623,3 +628,78 @@ def test_the_shape_score_is_priced_into_the_ranking():
     assert shape_first.shape_score > 0
     assert not any(x.pos is Pos.RB for x in shape_first.give)
     assert shape_first.our_gain >= points_first.our_gain
+
+def _backdate_proposal(store, rate_limits, days, *, to_team=9, give=(111,), get=(222,)):
+    """An offer made `days` ago — past the 1/day and 3/week limits, still
+    inside the 14-day window that is the rule actually under test."""
+    from datetime import UTC, datetime, timedelta
+    store.append("trade_proposals", {
+        "at": (datetime.now(UTC) - timedelta(days=days)).isoformat(),
+        "to_team": to_team,
+        "offer_hash": rate_limits.offer_hash(list(give), list(get), to_team),
+        "give": list(give), "get": list(get)})
+
+def test_an_accepted_offer_stops_blocking_the_manager(tmp_path, monkeypatch):
+    """The 2026-09-08 bug: the Pitts-for-Wilson deal went through, Wilson was
+    on our roster, and team 9 stayed blocked for the rest of the fortnight."""
+    from core.gates import rate_limits
+    from core.state import store
+
+    monkeypatch.setattr(store, "_path", lambda: tmp_path / "state.json")
+    _backdate_proposal(store, rate_limits, 8)
+    ok, why = rate_limits.can_propose(9, [333], [444])
+    assert not ok and "outstanding" in why
+
+    closed = rate_limits.settle_proposals({222, 999})   # Wilson landed
+    assert len(closed) == 1 and closed[0]["outcome"] == "accepted"
+    ok, _ = rate_limits.can_propose(9, [333], [444])
+    assert ok
+
+
+def test_an_offer_still_pending_is_not_settled(tmp_path, monkeypatch):
+    from core.gates import rate_limits
+    from core.state import store
+
+    monkeypatch.setattr(store, "_path", lambda: tmp_path / "state.json")
+    _backdate_proposal(store, rate_limits, 8)
+    assert rate_limits.settle_proposals({111, 999}) == []
+    ok, why = rate_limits.can_propose(9, [333], [444])
+    assert not ok and "outstanding" in why
+
+
+def test_a_half_matching_offer_is_left_open(tmp_path, monkeypatch):
+    # Strict on purpose. A partial match means something we do not model
+    # happened, and proposing twice to one manager is worse than waiting.
+    from core.gates import rate_limits
+    from core.state import store
+
+    monkeypatch.setattr(store, "_path", lambda: tmp_path / "state.json")
+    _backdate_proposal(store, rate_limits, 8, get=(222, 223))
+    assert rate_limits.settle_proposals({222}) == []
+    ok, _ = rate_limits.can_propose(9, [333], [444])
+    assert not ok
+
+
+def test_a_legacy_entry_cannot_be_settled_but_is_surfaced(tmp_path, monkeypatch):
+    # Written before 2026-09-16, so it carries no player ids.
+    from core.gates import rate_limits
+    from core.state import store
+
+    monkeypatch.setattr(store, "_path", lambda: tmp_path / "state.json")
+    store.append("trade_proposals", {"at": store.now_iso(), "to_team": 9,
+                                     "offer_hash": "deadbeef"})
+    assert rate_limits.settle_proposals({222}) == []
+    flagged = rate_limits.unverifiable_proposals()
+    assert len(flagged) == 1 and flagged[0]["to_team"] == 9
+
+
+def test_settling_with_an_empty_roster_changes_nothing(tmp_path, monkeypatch):
+    # A failed ESPN read must never look like "every offer closed".
+    from core.gates import rate_limits
+    from core.state import store
+
+    monkeypatch.setattr(store, "_path", lambda: tmp_path / "state.json")
+    _backdate_proposal(store, rate_limits, 8)
+    assert rate_limits.settle_proposals(set()) == []
+    ok, _ = rate_limits.can_propose(9, [333], [444])
+    assert not ok

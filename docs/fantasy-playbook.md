@@ -377,10 +377,15 @@ that is a real decision rather than an automatic hold); or the handcuff to our o
 **§5.6 Daily scan, daily action.** The sweep runs daily per `§1.3`. This league processes waivers
 every day but Tuesday, so a claim rarely waits for a weekly run. Free-agent adds fire any day.
 
-**§5.7 Three roster adds a week — hard, in code.** *(Pearce, 2026-09-05.)* A waiver claim and a
-free-agent add both spend one of `[v1 prior: 3]` per rolling seven days; the fourth is refused by
-`write_gate`. The cap exists so the sweep has to choose rather than churn: with only three, an add
-must change the starting lineup (`§5.2`) or fix the roster's shape (doctrine D5). **Trade before
+**§5.7 Seven roster adds a week — hard, in code.** *(Pearce, 2026-09-05 at three; raised to seven
+2026-09-16.)* A waiver claim and a free-agent add both spend one of `season.max_adds_per_week` per
+rolling seven days; the next is refused by `write_gate`. **The count was never the constraint that
+mattered.** On 09-16 all three adds were spent and every candidate on the menu still graded +0.0/wk
+starting-lineup gain — `§5.2` had already refused them all on value. A cap tight enough to bite
+before `§5.2` does is a cap that blocks the add worth making in a week the wire moves, while
+happily permitting a worthless one in a quiet week. Seven is a ceiling against churn, not a
+budget to spend: **the add still has to change the starting lineup (`§5.2`) or fix the roster's
+shape (doctrine D5)**, and most weeks the right number is still one or none. **Trade before
 you drop** (doctrine D4.5): a drop candidate carrying real ROS value is a trade chip, and a marginal
 add that would cut him is held until a trade has been tried or the add clears the urgent bar
 (`season.urgent_add_weekly_gain`).
@@ -400,6 +405,18 @@ terms and the timing, so the risk is being fleeced, and the rules are far tighte
 **§6.1 Rate limits (hard):** max **1 proposal per day**, max **3 per week**, max **1 open offer to
 the same manager at a time**, and never re-propose a rejected trade to the same manager inside
 `[v1 prior: 14 days]`.
+
+**§6.1a An offer that closed is not an open offer.** *(Added 2026-09-16.)* "Open" used to mean
+only *"we proposed to this manager inside 14 days"* — there was no way for an offer to end, so an
+**accepted** trade kept blocking that manager for the rest of the fortnight. It cost eight days:
+the 09-08 offer to team 9 was accepted, Garrett Wilson was on our roster, and every sweep after it
+refused what it rated the best idea on the board because that manager read as busy. Each run now
+settles first: **if every player we asked to GET is on our roster, the offer was accepted and the
+block is released.** The test is strict on purpose — a partial match means something happened that
+we do not model, and proposing twice to one manager is worse than waiting out the fortnight. A
+rejected or expired offer still cannot be detected (ESPN exposes no pending outgoing offers to the
+read API) and still ages out at 14 days. Offers recorded before 2026-09-16 carry no player ids,
+cannot be settled, and are surfaced to the agent as unverifiable rather than passed off as live.
 
 **§6.2 The value test.** Propose only if the trade raises our **projected starting-lineup points
 ROS** — not our total roster value. Depth that never starts is worth close to zero. Account for the
@@ -542,7 +559,7 @@ else may be written:
 |---|---|
 | Draft queue + draft pick | **auto** (draft day only) |
 | Lineup / start-sit | **auto** — reversible until kickoff |
-| Waiver claim / free-agent add-drop, inside `§5` | **auto** — max 3 a week (`§5.7`) |
+| Waiver claim / free-agent add-drop, inside `§5` | **auto** — max 7 a week (`§5.7`) |
 | Outgoing trade proposal, inside `§6.1`–`§6.7` | **auto**, rate-limited (1/day, 3/week), `§6.2`/`§6.3` re-checked in code |
 | Accepting an incoming trade | **auto** — *only* on a clean sweep of the `§6.8` gauntlet, with immediate notification |
 | Countering an incoming trade | 🔴 **NEVER** — a counter is a new outgoing proposal (`§6.8.13`) |

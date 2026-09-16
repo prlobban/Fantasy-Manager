@@ -55,6 +55,32 @@ countering 🔴 never · league settings / chat 🔴 never.
 
 ## Change log — newest first
 
+**2026-09-16 (17:4x) — the add cap goes to seven, and an accepted offer stops blocking the manager.**
+Pearce, reading the first live sweep: *"lift the pickup from 3 to 7 per week. also the offer shouldnt
+be outstanding we have garret wilson now."* Both correct, and the second was a real bug.
+
+- **`§5.7` 3 → 7 adds a rolling week.** The count was never the binding constraint: on 09-16 all
+  three were spent and every candidate on the menu still graded **+0.0/wk**, because `§5.2` had
+  already refused them on value. A cap that bites before the value test blocks the Jordan Mason add
+  in a week the wire moves and permits a worthless one in a quiet week. Seven is a ceiling against
+  churn, not a budget — the prompt says so explicitly, and most weeks the right number is still one
+  or none.
+- **`§6.1a` — offers now close.** "Open" meant only *"proposed inside 14 days"*, so the accepted
+  Pitts-for-Garrett-Wilson deal kept team 9 blocked for the rest of the fortnight. Eight days of
+  sweeps refused the Jonathan Taylor idea (+78.7 our_gain, market 0.86, fixes RB short and both
+  surpluses) against a manager who was not actually mid-negotiation. `settle_proposals` now runs at
+  the top of every packet build: **every player we asked to GET is on our roster → accepted →
+  block released.** Strict by design; a partial match stays open. `record_proposal` now stores
+  `give`/`get`, not just the hash — the hash could not be reversed, which is why the bug had no
+  possible fix from the existing record.
+- **The 09-08 entry was cleared by hand** on the box: it predates the id-recording change, so it
+  could not settle itself. Verified against the live roster first (Wilson present, Pitts gone).
+- Rejected and expired offers still cannot be detected — ESPN exposes no pending outgoing offers to
+  the read API — and still age out at 14 days. Legacy id-less entries are surfaced to the agent as
+  `unverifiable_open_proposals` rather than passed off as live negotiations.
+
+Five new tests; suite green.
+
 **2026-09-16 — Slack runs both ways (`§8.9`, D10).** Pearce, after typing into #fantasy and getting
 nothing back: *"is there a way for me to communicate with the agent like I tried via slack?"* There
 was not — `core/notify.py` posts and nothing read the channel, so every reply he had typed went

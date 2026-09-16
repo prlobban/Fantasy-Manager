@@ -238,6 +238,15 @@ def build(task: str, state: ls_mod.LeagueState | None = None,
 
     me = st.me
     shape = roster_mod.analyse(me.roster, ros_vals, st.facts.settings)
+
+    # §6.1 — close any outgoing offer the other manager has already accepted,
+    # BEFORE the limits are read. An accepted offer used to keep that manager
+    # blocked for the rest of the fortnight, which on 09-08 hid the best idea
+    # on the board for eight days.
+    if settled := rate_limits.settle_proposals({p.espn_id for p in me.roster}):
+        log.info("settled %d outgoing proposal(s): %s", len(settled),
+                 [e.get("to_team") for e in settled])
+
     day_left, week_left = rate_limits.proposals_left()
     packet: dict[str, Any] = {
         "task": task,
@@ -328,6 +337,10 @@ def build(task: str, state: ls_mod.LeagueState | None = None,
             "proposals_left_this_week": week_left,
             "recent_adds": (store.load().get("roster_adds") or [])[-3:],
             "recent_proposals": (store.load().get("trade_proposals") or [])[-3:],
+            # Offers recorded before 2026-09-16 carry no player ids, so they
+            # cannot be settled — only waited out. Say so rather than letting
+            # the agent read an unresolvable block as a live negotiation.
+            "unverifiable_open_proposals": rate_limits.unverifiable_proposals(),
             "recent_accepts": (store.load().get("trade_accepts") or [])[-3:],
         },
         "thresholds": priors().as_dict(),
