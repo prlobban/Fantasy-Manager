@@ -20,6 +20,7 @@ import logging
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
+from core.browser import overrides
 from core.browser import selectors as S
 from core.browser.session import EspnSession
 
@@ -27,7 +28,17 @@ log = logging.getLogger(__name__)
 
 
 class ActionFailed(RuntimeError):
-    """A write could not be completed. Never swallowed — the gate logs it."""
+    """A write could not be completed. Never swallowed — the gate logs it.
+
+    `group` names the selectors.py constant that could not be resolved, when the
+    failure was a selector failure. That single field is what lets write_gate
+    tell "ESPN moved a class name" apart from "the network died" and run a
+    targeted heal instead of asking a human to go looking (2026-09-14).
+    """
+
+    def __init__(self, message: str, *, group: str | None = None) -> None:
+        super().__init__(message)
+        self.group = group
 
 
 class PartialWrite(ActionFailed):
@@ -44,8 +55,9 @@ class PartialWrite(ActionFailed):
     reads `.receipt` off this and records `executed=True` with the reason.
     """
 
-    def __init__(self, message: str, *, receipt: Receipt | None = None) -> None:
-        super().__init__(message)
+    def __init__(self, message: str, *, receipt: Receipt | None = None,
+                 group: str | None = None) -> None:
+        super().__init__(message, group=group)
         self.receipt = receipt
 
 
@@ -73,12 +85,41 @@ def _receipt(s: EspnSession, action: str, detail: str, *, verified: bool) -> Rec
     )
 
 
-def _need(page, *candidates: str, what: str):
-    loc = S.first_present(page, *candidates)
+def _need(page, *candidates: str, what: str, group: str | None = None):
+    """The first candidate that resolves, or a failure that names the group.
+
+    When `group` is given the HEALED candidate is tried first — that is how a
+    self-heal written during one action takes effect in every other action
+    without a restart.
+    """
+    if group:
+        candidates = overrides.candidates(group, ",".join(candidates))
+        # Resolve candidate-by-candidate so a match on a consent dialog can be
+        # skipped rather than returned. `first_present` alone would hand back
+        # OneTrust's hidden search box and the click would time out against an
+        # invisible element (2026-09-15).
+        from core.browser.selfheal import disqualified
+
+        loc = None
+        for cand in candidates:
+            try:
+                c = page.locator(cand)
+                if c.count() == 0:
+                    continue
+            except Exception:
+                continue
+            if disqualified(c):
+                continue
+            loc = c
+            break
+    else:
+        loc = S.first_present(page, *candidates)
     if loc is None:
         raise ActionFailed(
-            f"could not find {what}. Selectors are in core/browser/selectors.py; "
-            "run scripts/discover_selectors.py against a live page to re-point them."
+            f"could not find {what}"
+            + (f" [{group}]" if group else "")
+            + ". Selectors are in core/browser/selectors.py.",
+            group=group,
         )
     return loc
 
@@ -86,15 +127,19 @@ def _need(page, *candidates: str, what: str):
 # ── draft ────────────────────────────────────────────────────────────────────
 
 
-def _need_in_row(page, name: str, *candidates: str, what: str):
+def _need_in_row(page, name: str, *candidates: str, what: str,
+                 group: str | None = None):
     """A button that sits in a row carrying `name`. Fails closed: a click that
     cannot be tied to the intended player is not attempted at all."""
+    if group:
+        candidates = overrides.candidates(group, ",".join(candidates))
     loc = S.in_row_with(page, name, *candidates)
     if loc is None:
         raise ActionFailed(
-            f"could not find {what} in a row containing {name!r}. Either the "
-            "search did not narrow to him or the selectors are stale — see "
-            "core/browser/selectors.py and scripts/discover_selectors.py."
+            f"could not find {what} in a row containing {name!r}"
+            + (f" [{group}]" if group else "")
+            + ". Either the search did not narrow to him or the selectors are stale.",
+            group=group,
         )
     return loc
 
@@ -254,10 +299,62 @@ def set_lineup(s: EspnSession, league_id: int, team_id: int, season: int,
     # The banner is ESPN's own confirmation. Absent it, the caller re-reads the
     # roster off the API before claiming anything (§10.6).
     saved = _move_saved(page)
+
+    # 🔴 Re-read the page and check WHERE each player ended up. The banner only
+    # proves a move committed, not that it was the move we asked for: on
+    # 2026-09-15 two writes reported "1/1 applied [verified]" for swaps that
+    # left RB2 empty. A receipt that cannot tell those apart is the §10.6
+    # silent degraded mode, and it cost most of a matchup.
+    misplaced = _verify_slots(page, moves, names)
+    detail = f"{applied}/{len(moves)} moves applied"
+    if misplaced:
+        detail += " — NOT in the intended slot: " + ", ".join(misplaced)
     return _receipt(
-        s, "set lineup", f"{applied}/{len(moves)} moves applied",
-        verified=applied == len(moves) and saved,
+        s, "set lineup", detail,
+        verified=applied == len(moves) and saved and not misplaced,
     )
+
+
+def _verify_slots(page, moves, names) -> list[str]:
+    """Which of `moves` did NOT end with the player in the slot asked for.
+
+    Reads the rendered page rather than the API: the API is a separate,
+    eventually-consistent read, and the question here is narrow — did the
+    clicks we just made land where we aimed them.
+
+    Unreadable rows are reported as misplaced, not skipped. An unverifiable
+    write is exactly the thing that must not be called verified.
+    """
+    import re as _re
+
+    out: list[str] = []
+    try:
+        rows = page.locator(S.LINEUP_SLOT_ROW)
+        texts = []
+        for i in range(rows.count()):
+            try:
+                texts.append(" ".join((rows.nth(i).inner_text() or "").split()))
+            except Exception:
+                continue
+    except Exception as e:
+        log.warning("could not re-read the lineup to verify: %s", e)
+        return [f"{names.get(i, i)}->{sl}" for i, sl in moves]
+
+    for espn_id, slot in moves:
+        name = (names or {}).get(espn_id)
+        if not name:
+            out.append(f"{espn_id}->{slot} (no name to verify by)")
+            continue
+        # The row that carries this player, and the slot label it starts with.
+        row = next((t for t in texts if name.lower() in t.lower()), None)
+        if row is None:
+            out.append(f"{name}->{slot} (no row found)")
+            continue
+        if not any(_re.match(rf"\s*{_re.escape(lbl)}\b", row, _re.I)
+                   for lbl in S.slot_labels(slot)):
+            actual = row.split()[0] if row.split() else "?"
+            out.append(f"{name}->{slot} (is in {actual})")
+    return out
 
 
 def _visible_save(page):
@@ -317,6 +414,7 @@ def _slot_row_with_here(page, slot: str):
     n = rows.count()
     for candidate in S.slot_labels(slot):
         label = re.compile(rf"^\s*{re.escape(candidate)}\b", re.I)
+        occupied = None
         for i in range(n):
             try:
                 r = rows.nth(i)
@@ -324,11 +422,35 @@ def _slot_row_with_here(page, slot: str):
                 if not label.search(text):
                     continue
                 here = r.locator(S.LINEUP_HERE_BUTTON)
-                if here.count() > 0:
+                if here.count() == 0:
+                    continue
+                # 🔴 An EMPTY row of this slot wins over an occupied one.
+                # 2026-09-15: RB rendered twice — Etienne, then "RB | Empty" —
+                # and taking the first match swapped the two backs on every
+                # sweep while RB2 stayed vacant and we fielded eight starters.
+                # Swapping into a filled slot is a legitimate operation; it is
+                # just never the one you want while a slot of that name is
+                # sitting open.
+                if _row_is_empty(text):
                     return here
+                if occupied is None:
+                    occupied = here
             except Exception:
                 continue
+        if occupied is not None:
+            return occupied
     return None
+
+
+def _row_is_empty(text: str) -> bool:
+    """Whether a lineup row is a vacant slot rather than a player.
+
+    ESPN prints the literal word in the player cell of an unfilled slot:
+    "RB | Empty | -- | --".
+    """
+    import re as _re
+
+    return bool(_re.search(r"\bEmpty\b", text or "", _re.I))
 
 
 def _row_for_player(page, espn_id: int, name: str | None = None):
@@ -381,7 +503,8 @@ def add_drop(s: EspnSession, league_id: int, season: int,
     page = s.goto(f"/football/players/add?leagueId={league_id}&seasonId={season}")
     s.dismiss_overlays()
 
-    box = _need(page, S.PLAYER_SEARCH, S.DRAFT_SEARCH, what="the player search box")
+    box = _need(page, S.PLAYER_SEARCH, S.DRAFT_SEARCH, what="the player search box",
+                group="PLAYER_SEARCH")
     box.first.fill(add_name)
     page.wait_for_timeout(600)
     # The table filters on ENTER. Typing alone leaves the full free-agent list
@@ -391,7 +514,8 @@ def add_drop(s: EspnSession, league_id: int, season: int,
     box.first.press("Enter")
     page.wait_for_timeout(2500)
 
-    btn = _need_in_row(page, add_name, S.ADD_PLAYER_BUTTON, what="an Add/Claim button")
+    btn = _need_in_row(page, add_name, S.ADD_PLAYER_BUTTON, what="an Add/Claim button",
+                       group="ADD_PLAYER_BUTTON")
     btn.first.click()
     page.wait_for_timeout(2000)
 
@@ -438,7 +562,8 @@ def add_drop(s: EspnSession, league_id: int, season: int,
         d.first.click()
         page.wait_for_timeout(800)
 
-    confirm = _need(page, S.CONFIRM_BUTTON, what="the Continue/Confirm button")
+    confirm = _need(page, S.CONFIRM_BUTTON, what="the Continue/Confirm button",
+                    group="CONFIRM_BUTTON")
     if confirm.first.is_disabled():
         raise ActionFailed(
             "Continue is still disabled after selecting the drop — ESPN has not "
@@ -472,7 +597,8 @@ def drop_player(s: EspnSession, league_id: int, team_id: int, season: int,
     )
     s.dismiss_overlays()
 
-    toolbar = _need(page, S.TEAM_DROP_TOOLBAR, what="the team page's Drop button")
+    toolbar = _need(page, S.TEAM_DROP_TOOLBAR, what="the team page's Drop button",
+                    group="TEAM_DROP_TOOLBAR")
     toolbar.first.click()
     page.wait_for_timeout(2000)
 
@@ -490,7 +616,8 @@ def drop_player(s: EspnSession, league_id: int, team_id: int, season: int,
     d.first.click()
     page.wait_for_timeout(1000)
 
-    confirm = _need(page, S.CONFIRM_BUTTON, what="the drop Continue/Confirm button")
+    confirm = _need(page, S.CONFIRM_BUTTON, what="the drop Continue/Confirm button",
+                    group="CONFIRM_BUTTON")
     if confirm.first.is_disabled():
         raise ActionFailed(
             f"Continue is still disabled after selecting {drop_name!r} — ESPN has "
@@ -555,7 +682,8 @@ def propose_trade(s: EspnSession, league_id: int, season: int, to_team_id: int,
     )
     s.dismiss_overlays()
 
-    start = _need(page, S.TRADE_PROPOSE_BUTTON, what="the Propose Trade button")
+    start = _need(page, S.TRADE_PROPOSE_BUTTON, what="the Propose Trade button",
+                  group="TRADE_PROPOSE_BUTTON")
     start.first.click()
     page.wait_for_timeout(1500)
 
@@ -577,10 +705,12 @@ def propose_trade(s: EspnSession, league_id: int, season: int, to_team_id: int,
     for pid, name in get:
         _tick(pid, name)
 
-    review = _need(page, S.TRADE_REVIEW_BUTTON, what="the Review Trade button")
+    review = _need(page, S.TRADE_REVIEW_BUTTON, what="the Review Trade button",
+                   group="TRADE_REVIEW_BUTTON")
     review.first.click()
     page.wait_for_timeout(1200)
-    send = _need(page, S.TRADE_SEND_BUTTON, what="the Send Trade button")
+    send = _need(page, S.TRADE_SEND_BUTTON, what="the Send Trade button",
+                 group="TRADE_SEND_BUTTON")
     send.first.click()
     page.wait_for_timeout(2500)
 

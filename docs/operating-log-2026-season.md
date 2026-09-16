@@ -66,6 +66,62 @@ a bot reading its own digest as instruction is a feedback loop with write access
 reported as `unavailable`, never as silence. The cursor advances only after a run reaches the agent.
 **Blocked on one thing:** the Polaris app needs the **`channels:history`** scope and membership of
 #fantasy — without it every run reports `missing_scope` and reads nothing. 11 tests, suite green.
+**2026-09-15 — the selectors now fix themselves, and the diagnostic stopped lying.**
+Pearce: *"it needs to be able to run those scripts"*, then *"I want it to be full self healing — it
+can do everything without me."* Built, live, on `main`.
+
+**What actually broke the Buccaneers claim:** ESPN renamed `add-action-btn` to `claim-action-btn`.
+The button was never missing — fifty of them on the page, `title="Claim"`, fully enabled. The
+`:has-text('Claim')` fallback missed because it is an ICON button with no text at all.
+
+🔴 **Two structural faults mattered more than the class name.** `scripts/discover_selectors.py` —
+the script every alert told Pearce to run — probed sixteen selectors and **none on the add page**,
+so running it would have reported everything healthy. And it exited 1 on every healthy run, because
+`LINEUP_EDIT_BUTTON` is obsolete in-season and absence was counted as failure. A health signal that
+is always red is not a health signal, and a diagnostic that cannot see the broken thing is worse
+than none.
+
+**The loop:** probe → discover → verify → write → commit. `core/browser/groups.py` is now the single
+enumeration of every selector group — where it renders, what identifies it, whether absence is
+normal — and the prober iterates it, so a group that exists is a group that gets checked. A test
+fails the build if a selector constant is missing from the registry. Healed candidates go to
+`core/browser/overrides.json`, consulted **before** the built-ins and never replacing them, so a
+wrong heal degrades to what used to work and reverting is deleting a line.
+
+**What it refuses to do**, because full autonomy is not the same as no limits:
+- **Irreversible writes stay human** (§10.6): the draft pick button, trade send, trade accept.
+- **A disabled control is never healed.** Pearce caught this: the claim also ran with a **full bench
+  and an empty RB starting slot**, and a disabled Add button is indistinguishable from a renamed one
+  to a scan. Opposite fixes — one needs a selector, the other needs a drop.
+- **No blind retries.** The group names the step, so `ADD_PLAYER_BUTTON` is known to fail *before*
+  any click while `CONFIRM_BUTTON` may fail *after*; post-commit failures re-read the roster from
+  the API and only retry if the add genuinely did not land. This is the §5.7 double-spend the
+  2026-09-14 alert refused to risk — now it is checked rather than avoided.
+- **No ambiguous selectors.** Its first attempt healed `TEAM_DROP_TOOLBAR` to
+  `button.action-buttons`, which matches three buttons; that group exists precisely so a drop cannot
+  hit the wrong control. Button candidates matching more than one element are now rejected, and
+  class is composed with text (`button.action-buttons:text-is('Drop')`).
+
+**It gets better over time.** `core/browser/healing_log.py` records every break, heal and
+resolution. The candidate that resolved last time is tried first — faster, and it stops a long-dead
+candidate that starts matching something unrelated from winning on declaration order. A group that
+breaks 3x, or an override that has held 10 days across 6 clean probes, becomes a note in
+`get_lessons` for the Tuesday review: rewrite the declared candidates, because the override is now
+the truth and `selectors.py` is the fiction.
+
+**Triggers:** on `ActionFailed` inside `write_gate.execute` (heal, then retry the same performer),
+and as a pre-flight via `healthcheck.py --selectors --heal`. Agent-facing tools `probe_selectors`
+and `heal_selectors` — named `core` functions, not shell access (§10.3).
+
+**Verified live, not just tested:** `ADD_PLAYER_BUTTON` healed to `button[title='Claim' i]` (50
+matches) and committed itself; team and trade pages probe clean. Three bugs in the new code were
+caught by running it against the real page rather than by reasoning about it — the verification step
+could never pass, `goto_target` used two URLs the write path does not use, and the first healed
+selector was ambiguous. 29 new tests, full suite green. `8c0665e`, merged `ba5c567`.
+
+⚠️ **The vault's copy of this file is stale** (frozen 2026-09-03, still says the repo does not
+exist). Doctrine ships with the repo; the vault should hold a pointer, not a second copy.
+
 
 **2026-09-14 (10:50) — the cadence was never the gap, and checking that found a championship bug.**
 Pearce, on the proposed pre-Thursday lineup pass: *"thursday should run at 7am already shouldn't

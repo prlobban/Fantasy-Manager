@@ -215,7 +215,7 @@ def build(task: str, state: ls_mod.LeagueState | None = None,
     from core.gates import rate_limits
     from core.manager import research as R
     from core.manager import roster as roster_mod
-    from core.state import lessons
+    from core.state import journal, lessons
 
     st = state or ls_mod.snapshot()
     weeks_left = max(1, st.facts.settings.regular_season_weeks - st.week + 1)
@@ -293,6 +293,12 @@ def build(task: str, state: ls_mod.LeagueState | None = None,
             "note": "multipliers already applied to the valuations above (D1.4); read the facts",
         },
         "lessons": lessons.read(),
+        # The agent's memory of its OWN previous runs (what it did, declined,
+        # escalated, and left open). Every sweep is a cold start; this is the
+        # only thing that tells it what it already knows.
+        "memory": journal.for_packet(),
+        # And what Pearce said since the last one (§8.9, D10). Memory is what
+        # it did; the inbox is what he wants.
         "inbox": _inbox_block(),
         "guardrails": {
             "kill_switch": kill_switch.state(),

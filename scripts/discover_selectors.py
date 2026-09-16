@@ -1,14 +1,31 @@
 #!/usr/bin/env python
-"""Point core/browser/selectors.py at whatever ESPN is actually rendering.
+"""Probe — and optionally re-point — every selector this system depends on.
 
-Run this against a LIVE page — a practice draft for the draft-room selectors,
-the team page for the lineup ones. It tries every candidate in selectors.py,
-reports which resolve, and dumps the DOM so new ones can be written.
-
-    python scripts/discover_selectors.py --draft --headed
     python scripts/discover_selectors.py --team
+    python scripts/discover_selectors.py --add --heal
+    python scripts/discover_selectors.py --all --heal --notify
+    python scripts/discover_selectors.py --draft --headed     # a practice room
 
-Headed is usually right: you want to see what the page is doing.
+## What changed, and why (2026-09-15)
+
+The old version of this script probed sixteen selectors, four of them on the
+team page and none at all on the add/free-agent page. On 2026-09-14 the
+Buccaneers D/ST claim died on `ADD_PLAYER_BUTTON`, the alert told Pearce to run
+this script, and running it would have reported everything fine — it did not
+look at that selector. It also always exited 1, because `LINEUP_EDIT_BUTTON` is
+obsolete in-season and absence was being counted as failure.
+
+Both are structural fixes now, not spot fixes:
+
+* the target list comes from `core/browser/groups.py`, which is the single
+  enumeration of every group, so a selector that exists is a selector that
+  gets probed;
+* a group marked `optional` reports as `----` and never fails the run, so the
+  exit code means something again.
+
+`--heal` makes it the same code path the unattended agent runs: discover a
+replacement, write it, verify it resolves, commit it. Without `--heal` this is
+strictly read-only.
 """
 from __future__ import annotations
 
@@ -16,90 +33,83 @@ import argparse
 import logging
 import sys
 
-from core.browser import selectors as S
-from core.browser.session import EspnSession
-from core.config import settings
+from core.browser import groups as G
+from core.browser import selfheal
+from core.notify import notify
 
-DRAFT_TARGETS = {
-    "DRAFT_BOARD_CELL_ANY": S.DRAFT_BOARD_CELL_ANY,
-    "DRAFT_PICK_TRAIN": S.DRAFT_PICK_TRAIN,
-    "DRAFT_PICK_ROW": S.DRAFT_PICK_ROW,
-    "DRAFT_ON_CLOCK": S.DRAFT_ON_CLOCK,
-    "DRAFT_TIMER": S.DRAFT_TIMER,
-    "DRAFT_PLAYER_ROW": S.DRAFT_PLAYER_ROW,
-    "DRAFT_BUTTON": S.DRAFT_BUTTON,
-    "DRAFT_SEARCH": S.DRAFT_SEARCH,
-    "QUEUE_CONTAINER": S.QUEUE_CONTAINER,
-    "QUEUE_ROW": S.QUEUE_ROW,
-    "QUEUE_ADD_BUTTON": S.QUEUE_ADD_BUTTON,
-    "QUEUE_REMOVE_BUTTON": S.QUEUE_REMOVE_BUTTON,
-}
-TEAM_TARGETS = {
-    "LINEUP_EDIT_BUTTON": S.LINEUP_EDIT_BUTTON,
-    "LINEUP_SLOT_ROW": S.LINEUP_SLOT_ROW,
-    "LINEUP_MOVE_BUTTON": S.LINEUP_MOVE_BUTTON,
-    "LINEUP_SAVE_BUTTON": S.LINEUP_SAVE_BUTTON,
-}
-
-
-def probe(page, targets: dict[str, str]) -> int:
-    found = 0
-    print(f"\n{'NAME':24} {'N':>4}  CANDIDATE THAT MATCHED")
-    for name, group in targets.items():
-        hit, count = None, 0
-        for cand in [c.strip() for c in group.split(",")]:
-            try:
-                n = page.locator(cand).count()
-            except Exception:
-                continue
-            if n:
-                hit, count = cand, n
-                break
-        found += bool(hit)
-        print(f"{name:24} {count:>4}  {hit or '*** NONE MATCHED ***'}")
-    return found
+TARGETS = {"team": G.TEAM, "add": G.ADD, "trade": G.TRADE, "draft": G.DRAFT}
 
 
 def main() -> int:
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--draft", action="store_true", help="probe the draft room")
-    ap.add_argument("--team", action="store_true", help="probe the team page")
-    ap.add_argument("--url", type=str, default=None)
-    ap.add_argument("--headed", action="store_true")
-    ap.add_argument("--wait", type=int, default=8, help="seconds to let the SPA settle")
+    ap = argparse.ArgumentParser(description=__doc__,
+                                 formatter_class=argparse.RawDescriptionHelpFormatter)
+    for name in TARGETS:
+        ap.add_argument(f"--{name}", action="store_true", help=f"probe the {name} page")
+    ap.add_argument("--all", action="store_true",
+                    help="every target except the draft room (which needs an open draft)")
+    ap.add_argument("--heal", action="store_true",
+                    help="re-point anything broken, verify it, and commit it")
+    ap.add_argument("--notify", action="store_true",
+                    help="post the result to Slack (what the cron pre-flight uses)")
+    ap.add_argument("--headed", action="store_true", help="watch it work")
+    ap.add_argument("--wait", type=int, default=6, help="seconds to let the SPA settle")
     args = ap.parse_args()
 
-    cfg = settings()
-    s = EspnSession(headless=not args.headed)
-    s.start()
-    try:
-        if args.url:
-            url = args.url
-        elif args.draft:
-            from core.espn.client import client
+    chosen = [t for n, t in TARGETS.items() if getattr(args, n)]
+    if args.all:
+        chosen = [G.TEAM, G.ADD, G.TRADE]
+    if not chosen:
+        chosen = [G.TEAM]
 
-            url = (f"/football/draft?leagueId={cfg.league_id}&seasonId={cfg.season}"
-                   f"&teamId={client().my_team_id}&memberId={cfg.swid}")
-        else:
-            url = f"/football/team?leagueId={cfg.league_id}&seasonId={cfg.season}"
+    broken: list[str] = []
+    healed: list[str] = []
+    blocks: list[str] = []
 
-        s.goto(url)
-        s.page.wait_for_timeout(args.wait * 1000)
-        s.dismiss_overlays()
+    for target in chosen:
+        print(f"\n{'=' * 70}\n{target.upper()}\n{'=' * 70}")
+        try:
+            rep, heals = selfheal.run(target, heal=args.heal,
+                                      headless=not args.headed,
+                                      settle_ms=args.wait * 1000)
+        except Exception as e:
+            print(f"  could not probe {target}: {e}")
+            broken.append(f"{target}: page would not load ({e})")
+            continue
 
-        targets = DRAFT_TARGETS if args.draft else TEAM_TARGETS
-        found = probe(s.page, targets)
-        print(f"\n{found}/{len(targets)} selector groups resolved")
+        print(rep.text())
+        for h in heals:
+            print(f"  {h}")
+            if h.healed:
+                healed.append(f"{h.group} -> {h.candidate}")
 
-        dom = s.dump_dom("selector-discovery")
-        shot = s.screenshot("selector-discovery")
-        print(f"DOM  -> {dom}\nshot -> {shot}")
-        print("\nEdit core/browser/selectors.py for anything that says NONE MATCHED,")
-        print("then re-run. Nothing else in the codebase contains a selector.")
-        return 0 if found == len(targets) else 1
-    finally:
-        s.close()
+        if rep.broken:
+            names = ", ".join(p.group for p in rep.broken)
+            broken.append(f"{target}: {names}")
+            blocks.append(f"*{target}* — still broken: {names}"
+                          + (f"\nDOM: {rep.dom}" if rep.dom else ""))
+
+    print(f"\n{'=' * 70}")
+    if healed:
+        print("HEALED: " + " · ".join(healed))
+    if broken:
+        print("STILL BROKEN: " + " · ".join(broken))
+        print("\nNothing else in the codebase contains a selector — fix these in\n"
+              "core/browser/selectors.py (or accept the healed override) and re-run.")
+    else:
+        print("every required selector resolves")
+
+    if args.notify and (broken or healed):
+        level = "error" if broken else "warn"
+        title = f"Selector probe: {len(broken)} broken" if broken \
+            else "Selectors self-healed"
+        body = "\n".join(blocks)
+        if healed:
+            body = ("Re-pointed and verified:\n" + "\n".join(f"· {h}" for h in healed)
+                    + ("\n\n" + body if body else ""))
+        notify(level, title, body)
+
+    return 1 if broken else 0
 
 
 if __name__ == "__main__":
