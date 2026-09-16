@@ -194,6 +194,35 @@ guess with a citation.
 
 **D9.5** Slack gets what was done. The reasoning is logged, in full, where it can be read and graded.
 
+
+## D10 — Pearce talks; the gates still hold *(Pearce, 2026-09-16)*
+
+**D10.1** The manager runs unattended, but it runs a team its owner watches. #fantasy was a
+loudspeaker: it reported and nothing read back, so the one input with more authority than any
+dossier — the man whose money is in the league — had no way in short of editing a doc. Every run now
+reads the channel first. Reading it *after* planning would be reading it too late.
+
+**D10.2** A message outranks the model. "Stop shopping Pitts", "I want the upside play this week",
+"don't touch the defence" — these are the owner's read on his own team, and they beat core's
+recommendation. The agent takes the steer and writes what it cost in `alternative`, because a
+preference that is followed silently cannot be graded on Tuesday.
+
+**D10.3** A message is not a key. It opens no write the `§8.2` table does not have, moves no gate
+enforced in code, and does not flip the switch — `§8.1` gives that to Pearce's own hand, and an
+agent that can be *asked* to unlock itself has locked nothing. The honest no goes back in the
+thread, naming the rule. This is not caution; it is the entire reason the gates are in code and not
+in a prompt (`§8.2a`).
+
+**D10.4** Every message gets an answer, in its own thread, in the sweep it arrived in. A question
+gets the real answer with the § behind it — *"Allen started under §4.7: Herbert's weekly edge was
+0.9 and the stud margin is 8"* — not a receipt. An unanswered message is flagged in the thread and
+the cursor still advances: a channel that repeats itself every morning is a channel he stops
+reading.
+
+**D10.5** Silence and an outage are different facts. A failed read says so in the packet, and the
+agent holds off on anything a message might plausibly have countermanded rather than proceeding as
+though the channel were quiet (`§8.8`).
+
 ---
 
 ## Sources

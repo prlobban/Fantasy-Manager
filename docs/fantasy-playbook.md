@@ -534,6 +534,19 @@ gitignored — same rule as every other credential here.
 **§8.8 Say what you don't know.** If a projection is missing, a status unconfirmed, or the model
 disagrees with itself, say so in the log. A confident wrong number is worse than a flagged gap.
 
+**§8.9 The channel runs both ways.** Every run reads what Pearce said in #fantasy since the last
+run — top-level messages and replies in a digest thread — and hands them to the agent in the packet
+before it plans. Each one is answered in its own thread. A message is the **strongest steer** the
+packet carries: a stated preference beats core's recommendation, and the action says so. It is
+**not authority**: it opens no write outside the `§8.2` table, moves no gate that is hard in code,
+and does not touch the kill switch — that stays Pearce's own lane (`§8.1`), flipped by his hand and
+not on request. Asked for one of those, the agent says no and names the rule. **A failed read is
+reported as a failure, never as silence** (`§8.8`): not knowing whether he said anything is not the
+same as knowing he didn't, and an agent that confuses them reads an outage as consent. The cursor
+advances only after a run reaches the agent, so a crash re-asks rather than swallows.
+*(Added 2026-09-16. Until then the channel was outbound only — replies typed into it went nowhere
+and were not logged.)*
+
 ---
 
 ## §9 — Open questions (do NOT invent answers)

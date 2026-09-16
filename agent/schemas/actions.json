@@ -55,6 +55,20 @@
     "escalate": {
       "type": "string",
       "description": "Anything a human must decide. Leave empty if nothing. Posted to Slack for Pearce."
+    },
+    "replies": {
+      "type": "array",
+      "description": "§8.9 / D10 — an answer to every message in `inbox.messages`, one per ts. Each is posted as a threaded reply under the message it answers. Empty only when the inbox was empty.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["ts", "answer"],
+        "properties": {
+          "ts": {"type": "string", "description": "The `ts` of the message being answered, copied exactly from the packet."},
+          "answer": {"type": "string", "minLength": 10, "maxLength": 700, "description": "Two or three sentences in the voice of the digest: the real answer with the § behind it, or what you did about it. If it asked for a write outside §8.2, a gate that is hard in code, or the kill switch, say no and name the rule (D10.3)."},
+          "acted": {"type": "boolean", "description": "True if an action in this run exists because of this message."}
+        }
+      }
     }
   }
 }

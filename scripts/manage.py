@@ -31,12 +31,21 @@ from agent.packet import build as build_packet
 from core.config import settings
 from core.espn import health, league_state
 from core.gates import kill_switch
+from core.inbox import mark_read
 from core.notify import notify
 
 log = logging.getLogger("manage")
 
 
 def _print_core_view(packet: dict) -> None:
+    box = packet.get("inbox") or {}
+    if box.get("unavailable"):
+        print(f"\nINBOX   unreadable — {box['unavailable']}")
+    elif box.get("messages"):
+        print(f"\nINBOX   {len(box['messages'])} message(s) from Pearce since the last run")
+        for m in box["messages"]:
+            print(f"  {m['at']}{' [thread]' if m.get('in_thread') else ''}  {m['text'][:160]}")
+
     if rs := packet.get("roster_shape"):
         print(f"\nSHAPE   {rs['summary']}")
         for n in rs.get("notes", []):
@@ -177,6 +186,20 @@ def _write_reasoning(task: str, scope: str, packet: dict, out: dict,
         L += [f"**Summary.** {out['summary']}", ""]
     if out.get("roster_assessment"):
         L += ["## Roster assessment", "", out["roster_assessment"], ""]
+    box = packet.get("inbox") or {}
+    if box.get("messages") or box.get("unavailable"):
+        # The durable record of the conversation. Slack threads are where it is
+        # read; this is where it can be graded on Tuesday.
+        L += ["## Pearce said", ""]
+        if box.get("unavailable"):
+            L += [f"- ⚠️ inbox unreadable: {box['unavailable']}", ""]
+        answered = {r.get("ts"): r for r in (out.get("replies") or [])}
+        for m in box.get("messages") or []:
+            L.append(f"- **{m['at']}**{' (thread)' if m.get('in_thread') else ''}: {m['text']}")
+            r = answered.get(m["ts"])
+            L.append(f"  - **answered:** {r.get('answer')}" if r
+                     else "  - **not answered**")
+        L.append("")
     if out.get("actions"):
         L += ["## Actions", ""]
         for a in out["actions"]:
@@ -215,6 +238,35 @@ def _write_reasoning(task: str, scope: str, packet: dict, out: dict,
             L += [f"- {json.dumps(x)}" for x in out["prior_proposals"]] + [""]
     p.write_text("\n".join(L), encoding="utf-8")
     return p
+
+
+def _answer_inbox(packet: dict, out: dict) -> None:
+    """§8.9 / D10 — reply in the thread, then advance the cursor.
+
+    The cursor moves only here, at the end of a run that actually reached the
+    agent. A sweep that dies at the health check or in the model re-reads the
+    same messages tomorrow, which is the failure we want: a question asked
+    twice beats a question silently swallowed.
+
+    An unanswered message still advances the cursor. Repeating it every morning
+    forever is how a channel trains you to stop reading it — the record is in
+    the reasoning file either way.
+    """
+    box = packet.get("inbox") or {}
+    msgs = box.get("messages") or []
+    if not msgs:
+        return
+    answered = {r.get("ts"): r for r in (out.get("replies") or []) if r.get("ts")}
+    for m in msgs:
+        if r := answered.get(m["ts"]):
+            notify("info", "Re: your message", (r.get("answer") or "").strip()[:700],
+                   thread_ts=m["ts"])
+        else:
+            log.warning("inbox: no reply for %s (%s)", m["ts"], m["text"][:80])
+            notify("warn", "Re: your message",
+                   "Read this but did not answer it in the sweep. "
+                   "Ask again if it still matters.", thread_ts=m["ts"])
+    mark_read(msgs[-1]["ts"])
 
 
 def main() -> int:
@@ -288,6 +340,7 @@ def main() -> int:
                f"{line} · efficiency {e.get('pct', '?')} · {n} lesson(s) · "
                f"{len(out.get('prior_proposals') or [])} prior change(s) proposed\n{hist}")
     else:
+        _answer_inbox(packet, out)
         brief, lines = _digest(out, decisions, names, read_only=read_only, scope=args.task)
         quiet = args.task == "lineup" and not decisions and not out.get("actions")
         if not quiet:

@@ -55,6 +55,18 @@ countering 🔴 never · league settings / chat 🔴 never.
 
 ## Change log — newest first
 
+**2026-09-16 — Slack runs both ways (`§8.9`, D10).** Pearce, after typing into #fantasy and getting
+nothing back: *"is there a way for me to communicate with the agent like I tried via slack?"* There
+was not — `core/notify.py` posts and nothing read the channel, so every reply he had typed went
+nowhere and was not even logged. New `core/inbox.py`: each run pulls human messages since a cursor
+(`data/slack_inbox.json`), follows digest threads because `conversations.history` does not return
+replies, and hands them to the agent under `inbox` **before** it plans. Answers go back as threaded
+replies (`replies` in the actions schema) and into the reasoning file. Filters Polaris's own posts —
+a bot reading its own digest as instruction is a feedback loop with write access. A failed read is
+reported as `unavailable`, never as silence. The cursor advances only after a run reaches the agent.
+**Blocked on one thing:** the Polaris app needs the **`channels:history`** scope and membership of
+#fantasy — without it every run reports `missing_scope` and reads nothing. 11 tests, suite green.
+
 **2026-09-14 (10:50) — the cadence was never the gap, and checking that found a championship bug.**
 Pearce, on the proposed pre-Thursday lineup pass: *"thursday should run at 7am already shouldn't
 it?"* **Correct.** `30 7 * * 0,1,3,4,5,6` includes Thursday, seven hours before the 14:35 CT
@@ -328,6 +340,9 @@ built, nothing installed. Reasoning: `2026-season/2026-09-03-system-design.md`.
 
 ## Watch items
 
+- ⚠️ **`§8.9` is built but not deployed.** The scope is proven — the laptop's copy of the same Slack
+  app read #fantasy successfully on 2026-09-16 — but the box has not run it. First run on `jarvis`
+  should report messages, not `missing_scope`; if it does not, the box token is a different app.
 - 🔴 **~48 hours to the draft** (Thu 09-03 → Sat 09-05 11:00 CT). Friday is the only build day, and
   `§3.9` is the floor: if only one thing ships, it's a correctly ordered queue.
 - 🔴 **Cookies aren't minted and the repo doesn't exist.** Everything is blocked on these two.
