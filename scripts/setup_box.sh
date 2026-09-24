@@ -34,7 +34,7 @@ if [ ! -f data/espn-session.json ]; then
   echo "!! data/espn-session.json MISSING — every WRITE will fail."
   echo "   The API cookies are not enough for the web UI. On the laptop run:"
   echo "     python scripts/login.py && python scripts/login.py --verify"
-  echo "     scp data/espn-session.json ironman@192.168.4.43:~/Fantasy-Manager/data/"
+  echo "     scp data/espn-session.json ronin@192.168.4.48:~/Fantasy-Manager/data/"
 else
   echo "session file present"
 fi

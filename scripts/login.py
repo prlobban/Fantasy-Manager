@@ -70,7 +70,7 @@ def do_login() -> int:
         print("\nNext, one at a time:")
         print(r"  .\.venv\Scripts\python.exe scripts\login.py --verify")
         print(r"  scp data\espn-session.json "
-              "ironman@192.168.4.43:~/Fantasy-Manager/data/")
+              "ronin@192.168.4.48:~/Fantasy-Manager/data/")
         print("\nThis file is a live credential — treat it like a password.")
         return 0
     finally:

@@ -479,11 +479,24 @@ def _child_env() -> dict[str, str]:
     its children with CLAUDECODE / CLAUDE_CODE_* variables; a nested CLI that
     sees them may refuse to start or route its output to the parent. They
     are stripped so every run starts clean, whoever launched it.
+
+    CLAUDE_CODE_OAUTH_TOKEN is the one exception: on a box authed by
+    `claude setup-token` it IS the login, and stripping it logs every child out.
     """
     import os
 
+    keep = {"CLAUDE_CODE_OAUTH_TOKEN"}
     env = {k: v for k, v in os.environ.items()
-           if k != "CLAUDECODE" and not k.startswith("CLAUDE_CODE_")}
+           if k != "CLAUDECODE" and (k in keep or not k.startswith("CLAUDE_CODE_"))}
+    # The CLI does not hand the token to the MCP servers it launches, so a
+    # claude spawned from inside core (research_player) arrives without it.
+    # Fall back to the token file named in .env rather than copying the
+    # secret into the per-run mcp.json.
+    settings()
+    if "CLAUDE_CODE_OAUTH_TOKEN" not in env:
+        tf = os.environ.get("CLAUDE_OAUTH_TOKEN_FILE", "").strip()
+        if tf and Path(tf).expanduser().is_file():
+            env["CLAUDE_CODE_OAUTH_TOKEN"] = Path(tf).expanduser().read_text().strip()
     return env
 
 
