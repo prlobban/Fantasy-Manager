@@ -610,6 +610,67 @@ def strip_locked_moves(moves, by_id, slots, starting_slots, week):
     return kept, sorted(skip), why
 
 
+def _capacity(starting_slots) -> dict[str, int]:
+    cap: dict[str, int] = {}
+    for rs in starting_slots:
+        cap[rs.name] = cap.get(rs.name, 0) + rs.count
+    return cap
+
+
+def resolve_lineup_target(moves, slots, starting_slots, by_id, week) -> dict[int, str]:
+    """The WHOLE lineup a list of moves is meant to produce.
+
+    The agent names only the players it moves; the ones it displaces are
+    implicit ("Warren to RB" means one of the two backs already there sits).
+    Without the full picture the browser cannot tell which occupant to evict,
+    and on 2026-09-27 it evicted Jefferson. Overflow at a slot resolves the way
+    the plan would: moved-in players stay, a locked player stays (he cannot
+    move), then the higher weekly projection; the rest go to the bench.
+    """
+    moved = {int(m["espn_id"]): str(m["slot"]) for m in moves}
+    target = {int(pid): sl for pid, sl in slots.items()}
+    target.update(moved)
+
+    def rank(pid):
+        p = by_id.get(pid)
+        if p is None:
+            return (False, 0.0)
+        return (p.game_locked(week), p.proj_week.get(week, 0.0))
+
+    for slot, cap in _capacity(starting_slots).items():
+        here = [pid for pid, sl in target.items() if sl == slot]
+        if len(here) <= cap:
+            continue
+        explicit = [pid for pid in here if moved.get(pid) == slot]
+        rest = sorted((pid for pid in here if moved.get(pid) != slot),
+                      key=rank, reverse=True)
+        for pid in rest[max(cap - len(explicit), 0):]:
+            target[pid] = "BE"
+    return target
+
+
+def lineup_shortfall(target, after, starting_slots):
+    """How the lineup ESPN now reports falls short of `target`.
+
+    Returns (starters not in their target slot as [(id, want, got)], starting
+    slots holding fewer bodies than the target put there). Checks EVERY
+    starter, not just the players moved: the 09-27 write moved three players
+    exactly where it aimed them and still benched a fourth.
+    """
+    wrong = [
+        (pid, want, after.get(pid, "?"))
+        for pid, want in target.items()
+        if want not in ("BE", "IR") and after.get(pid) != want
+    ]
+    short = []
+    for slot in _capacity(starting_slots):
+        want_n = sum(1 for sl in target.values() if sl == slot)
+        got_n = sum(1 for sl in after.values() if sl == slot)
+        if got_n < want_n:
+            short.append(f"{slot} {got_n}/{want_n}")
+    return wrong, short
+
+
 def _run_write(action, perform):
     """Run a gated write and hand the agent the REASON on failure.
 
@@ -671,22 +732,42 @@ def set_lineup(moves: list[dict], reason: str, cites: list[str]) -> str:
         args={"moves": moves}, cites=cites, reason=reason,
     )
 
+    starting = s.facts.settings.starting_slots
+    names = {p.espn_id: p.name for p in s.me.roster}
+    target = resolve_lineup_target(moves, s.me.slots, starting, by_id, s.week)
+    keep: dict[str, set[str]] = {}
+    for pid, sl in target.items():
+        if pid in names:
+            keep.setdefault(sl, set()).add(names[pid])
+
     def perform():
         from core.browser import actions as A
         from core.browser.session import EspnSession
 
+        args = (s.facts.settings.league_id, s.my_team_id, s.facts.settings.season)
         with EspnSession(headless=True) as sess:
-            return A.set_lineup(
-                sess, s.facts.settings.league_id, s.my_team_id,
-                s.facts.settings.season,
+            r = A.set_lineup(
+                sess, *args,
                 [(int(m["espn_id"]), str(m["slot"])) for m in moves],
-                names={p.espn_id: p.name for p in s.me.roster},
+                names=names, keep=keep,
             )
+            # One repair pass, same session, same gate: re-read the API and
+            # seat any starter who is not where the target put him. A slot
+            # left empty is ~15 points; a second look costs seconds.
+            wrong, short = lineup_shortfall(target, _snap(refresh=True).me.slots, starting)
+            fix = [(pid, want) for pid, want, _ in wrong
+                   if pid in by_id and not by_id[pid].game_locked(s.week)]
+            if fix:
+                log.warning("lineup off target after write (%s; short %s) — repair pass",
+                            wrong, short)
+                r2 = A.set_lineup(sess, *args, fix, names=names, keep=keep)
+                r.detail += f"; repair pass: {r2.detail}"
+            return r
 
     gate, receipt, err = _run_write(action, perform)
     # No Slack here: the sweep posts ONE digest of what was done (Pearce,
     # 2026-09-05: "just what it did"). The reason lives in decisions.jsonl.
-    applied, landed = None, None
+    applied, landed, off_target, short = None, None, None, None
     if receipt is not None:
         # §10.6 — the page's own banner is not proof enough, and for a lineup
         # move ESPN may not paint one at all. The READ API is the authority:
@@ -696,16 +777,18 @@ def set_lineup(moves: list[dict], reason: str, cites: list[str]) -> str:
             int(m["espn_id"]): after.me.slots.get(int(m["espn_id"]), "?")
             for m in moves
         }
-        landed = all(
-            applied[int(m["espn_id"])] == str(m["slot"]) for m in moves
-        )
-        # Don't hand back "UNVERIFIED" when the API has just confirmed every
-        # move; an honest receipt is the one the roster agrees with.
+        wrong, short = lineup_shortfall(target, after.me.slots, starting)
+        off_target = [f"{names.get(pid, pid)}: want {want}, is {got}"
+                      for pid, want, got in wrong] or None
+        short = short or None
+        # Verified means the WHOLE lineup matches, not just the movers.
+        landed = not wrong and not short
         receipt.verified = landed
     return _ok(allowed=gate.allowed, refused_by=gate.refused_by,
                reason=gate.reason, error=err,
                receipt=str(receipt) if receipt else None,
                verified=landed, slots_after=applied,
+               off_target=off_target, short_slots=short,
                skipped_locked=[by_id[i].name for i in frozen if i in by_id] or None)
 
 

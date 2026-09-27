@@ -226,15 +226,19 @@ def _wait_for_draft_button(page, row, *, timeout_ms: int):
 
 def set_lineup(s: EspnSession, league_id: int, team_id: int, season: int,
                moves: list[tuple[int, str]],
-               names: dict[int, str] | None = None) -> Receipt:
+               names: dict[int, str] | None = None,
+               keep: dict[str, set[str]] | None = None) -> Receipt:
     """Apply start/sit moves. `moves` is [(espn_id, target_slot_name)].
 
     ESPN's editor is two clicks per move: MOVE on the player, then HERE on the
     destination slot. Clicking MOVE alone (what the first version did) selects
     him and changes nothing — Save then saves the lineup as it was.
 
-    Moving a bench player into an occupied slot swaps the occupant to the
-    bench, so a plan's "X to RB" is one move even when it displaces someone.
+    Moving a player into an occupied slot swaps the occupant to the mover's old
+    slot, so a plan's "X to RB" is one move even when it displaces someone.
+    `keep` is {slot: names of players the plan wants to END in that slot}; the
+    HERE click never lands on a keeper's row while a non-keeper's row of the
+    same slot is available (see `_slot_row_with_here`).
     """
     page = s.goto(
         f"/football/team?leagueId={league_id}&teamId={team_id}&seasonId={season}"
@@ -272,7 +276,7 @@ def set_lineup(s: EspnSession, league_id: int, team_id: int, season: int,
             mv.first.click()
             page.wait_for_timeout(500)
 
-            dest = _slot_row_with_here(page, slot)
+            dest = _slot_row_with_here(page, slot, (keep or {}).get(slot))
             if dest is None:
                 log.warning("no destination slot %r offering HERE for player %s — "
                             "cancelling that move", slot, espn_id)
@@ -399,8 +403,17 @@ def _move_saved(page, name: str | None = None) -> bool:
     return surname in body
 
 
-def _slot_row_with_here(page, slot: str):
-    """The HERE button in the first row the page labels as `slot`.
+def _slot_row_with_here(page, slot: str, keepers: set[str] | None = None):
+    """The HERE button in the row of `slot` the move should land on.
+
+    Preference: an empty row, then an occupied row whose occupant is NOT a
+    keeper (the plan is moving him out anyway), then any occupied row.
+
+    🔴 2026-09-27: "first occupied row" swapped McConkey in for JEFFERSON — the
+    WR the plan was keeping — instead of Wilson, whom the next move sent to the
+    flex. Jefferson went to the bench, the flex move then evicted a back who
+    cannot play WR, and we fielded eight starters with our best player sitting.
+    Every move landed where it was aimed, so the receipt said verified.
 
     🔴 The slot name handed in comes from ESPN's READ API ("RB/WR/TE", "BE").
     The page's own SLOT column spells those "FLEX" and "Bench", so matching the
@@ -410,11 +423,13 @@ def _slot_row_with_here(page, slot: str):
     """
     import re
 
+    keep_lc = [k.lower() for k in (keepers or ()) if k]
     rows = page.locator(S.LINEUP_SLOT_ROW)
     n = rows.count()
     for candidate in S.slot_labels(slot):
         label = re.compile(rf"^\s*{re.escape(candidate)}\b", re.I)
         occupied = None
+        displaceable = None
         for i in range(n):
             try:
                 r = rows.nth(i)
@@ -435,8 +450,12 @@ def _slot_row_with_here(page, slot: str):
                     return here
                 if occupied is None:
                     occupied = here
+                if displaceable is None and not any(k in text.lower() for k in keep_lc):
+                    displaceable = here
             except Exception:
                 continue
+        if displaceable is not None:
+            return displaceable
         if occupied is not None:
             return occupied
     return None

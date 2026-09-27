@@ -197,3 +197,46 @@ def test_gate_still_records_a_clean_failure_as_not_executed(enabled, isolated_st
     rec = json.loads((isolated_state / "decisions.jsonl").read_text().strip())
     assert rec["executed"] is False
     assert rec["receipt"] is None
+
+
+# ── 2026-09-27: which occupied row a move swaps into ─────────────────────────
+
+
+class FakeSlotRow:
+    def __init__(self, text):
+        self.text = text
+        self.here = FakeButton(text="HERE")
+
+    def inner_text(self):
+        return self.text
+
+    def locator(self, sel):
+        return FakeLocator([self.here] if sel == S.LINEUP_HERE_BUTTON else [])
+
+
+def _wr_page():
+    rows = [FakeSlotRow("WR Justin Jefferson MIN WR"),
+            FakeSlotRow("WR Garrett Wilson NYJ WR")]
+    return rows, FakePage(matches={S.LINEUP_SLOT_ROW: rows})
+
+
+def test_a_move_never_swaps_out_a_keeper_while_a_non_keeper_row_exists():
+    """McConkey -> WR swapped with Jefferson, the first WR row, and benched him."""
+    rows, page = _wr_page()
+    here = A._slot_row_with_here(page, "WR", {"Justin Jefferson", "Ladd McConkey"})
+    here.first.click()
+    assert rows[1].here.clicks == 1 and rows[0].here.clicks == 0
+
+
+def test_with_no_keepers_the_old_behaviour_stands():
+    rows, page = _wr_page()
+    here = A._slot_row_with_here(page, "WR")
+    here.first.click()
+    assert rows[0].here.clicks == 1
+
+
+def test_an_empty_row_still_wins_over_any_occupied_one():
+    rows = [FakeSlotRow("WR Garrett Wilson NYJ WR"), FakeSlotRow("WR Empty -- --")]
+    page = FakePage(matches={S.LINEUP_SLOT_ROW: rows})
+    A._slot_row_with_here(page, "WR", {"Justin Jefferson"}).first.click()
+    assert rows[1].here.clicks == 1
