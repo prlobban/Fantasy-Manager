@@ -429,6 +429,16 @@ def build(
         )
         _flag(c, bench_open=bench_open, urgent=urgent, waiver_priority=waiver_priority,
               streamer_floor=streamer_floor, min_gain=min_gain, band=band)
+        # A ROS VOR of exactly 0.0 is not a missing value: this player IS the
+        # replacement baseline — at a one-starter position that is defined as
+        # the best free agent, so he scores 0.0 by construction. The agent read
+        # three of these as "not computed" on 2026-09-27 and spent a research
+        # call re-deriving a number that was right.
+        if c.ros_vor == 0.0:
+            c.reasons.append(
+                f"ROS VOR 0.0 is real, not missing: he IS the {fa.pos.value} replacement "
+                "baseline (best free agent / replacement rank). Compare him to our "
+                "roster's ROS VOR directly — anything below 0 is worse than him")
         cands.append(c)
 
     cands.sort(key=lambda c: -c.net_gain)
@@ -441,11 +451,14 @@ def build(
     # defences while the menu shows one (2026-09-07).
     best_streamer: dict[Pos, Candidate] = {}
     trimmed: list[Candidate] = []
-    also: list[str] = []
+    # Per position. One shared list (until 2026-09-27) printed four KICKERS as
+    # the D/ST alternatives for four straight runs.
+    also: dict[Pos, list[str]] = {}
     for c in cands:
         if c.player.pos in _STREAMED:
             if c.player.pos in best_streamer:
-                also.append(f"{c.player.name} +{c.net_gain:.1f}")
+                also.setdefault(c.player.pos, []).append(
+                    f"{c.player.name} {c.net_gain:+.1f}")
                 continue
             best_streamer[c.player.pos] = c
         trimmed.append(c)
@@ -484,10 +497,20 @@ def build(
     if adds_left is not None:
         plan.notes.append(f"§5.7: {adds_left} of {cap} roster adds left this week")
     for pos, c in best_streamer.items():
+        others = ", ".join(also.get(pos, [])[:4]) or "nobody close"
+        if c.net_gain <= 0:
+            # The best on the wire is no upgrade. Calling him "the best of the
+            # week" read as an instruction to stream a 3.8 over our 6.7.
+            plan.notes.append(
+                f"D6.1 {pos.value} is streamed: keep "
+                f"{c.drop.name if c.drop else 'the incumbent'} — the best on the wire, "
+                f"{c.player.name} ({c.net_gain:+.1f}/wk), is no upgrade. "
+                f"Also available: {others}")
+            continue
         plan.notes.append(
             f"D6.1 {pos.value} is streamed: {c.player.name} is the best of the week and "
             f"replaces {c.drop.name if c.drop else 'nobody'} in that slot — ONE add, not "
-            f"one per candidate. Also available: {', '.join(also[:4]) or 'nobody close'}")
+            f"one per candidate. Also available: {others}")
     plan.notes.append("an add that changes the best lineup needs set_lineup in the same "
                       "sweep — add_drop does not move anyone into a starting slot")
     plan.notes.append("flags are core's objections, not refusals — the gate only "

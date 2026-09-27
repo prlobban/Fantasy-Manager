@@ -703,3 +703,33 @@ def test_settling_with_an_empty_roster_changes_nothing(tmp_path, monkeypatch):
     assert rate_limits.settle_proposals(set()) == []
     ok, _ = rate_limits.can_propose(9, [333], [444])
     assert not ok
+
+
+def test_the_dst_note_lists_defences_not_kickers():
+    """2026-09-26/27: four runs named four KICKERS as the D/ST alternatives —
+    one shared 'also available' list across both streamed positions."""
+    roster = _roster_with_dst()
+    fas = ([pl(50 + i, Pos.DST, 9.2 - i, name=f"DST{i}") for i in range(3)]
+           + [pl(60 + i, Pos.K, 12.0 - i, name=f"K{i}") for i in range(3)])
+    ros = _vals(roster + fas, "ros")
+    fv = _vals(roster + fas)
+    plan = waivers.build(roster, fas, fv, settings_10(), waiver_priority=8,
+                         bench_open=0, current_week=9, ros_valuations=ros)
+    dst_note = next(n for n in plan.notes if n.startswith("D6.1 D/ST"))
+    k_note = next(n for n in plan.notes if n.startswith("D6.1 K"))
+    assert "DST1" in dst_note and "K1" not in dst_note
+    assert "K1" in k_note and "DST1" not in k_note
+
+
+def test_a_streamer_that_is_no_upgrade_is_not_called_the_best_of_the_week():
+    """'Broncos D/ST is the best of the week' at 3.8 against our 6.7 read
+    as an instruction to downgrade."""
+    roster = _roster_with_dst()           # our DST projects 5.0
+    fa = pl(50, Pos.DST, 3.8, name="worse DST")
+    ros = _vals(roster + [fa], "ros")
+    fv = _vals(roster + [fa])
+    plan = waivers.build(roster, [fa], fv, settings_10(), waiver_priority=8,
+                         bench_open=0, current_week=9, ros_valuations=ros)
+    note = next(n for n in plan.notes if n.startswith("D6.1 D/ST"))
+    assert "best of the week" not in note
+    assert "keep our DST" in note
