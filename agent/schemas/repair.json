@@ -1,0 +1,30 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["summary", "issues"],
+  "properties": {
+    "summary": {
+      "type": "string",
+      "description": "One sentence for Slack: what was wrong and what you did."
+    },
+    "issues": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["key", "status", "root_cause", "fix"],
+        "properties": {
+          "key": {"type": "string", "description": "The issue's key from issues.json."},
+          "status": {
+            "type": "string",
+            "enum": ["fixed", "already_fixed", "not_code", "cannot_reproduce",
+                     "needs_pearce", "working_as_intended"]
+          },
+          "root_cause": {"type": "string", "description": "File:line and why it produced the fault. Empty if not a code bug."},
+          "fix": {"type": "string", "description": "What changed, or for a non-fixed status, the reason."},
+          "tests": {"type": "array", "items": {"type": "string"}, "description": "Node ids of the regression tests added."}
+        }
+      }
+    }
+  }
+}
