@@ -62,6 +62,11 @@ CFG = settings()
 DATA = CFG.data_dir
 REPAIR_DIR = DATA / "repair"
 LEDGER = REPAIR_DIR / "ledger.jsonl"
+#: Worktrees live OUTSIDE data/. The repair agent is denied Read on data/**
+#: (league state, the ESPN session), and its first live run found its own
+#: worktree under data/repair/ covered by that rule: no evidence, no writes,
+#: no pytest. It refused to fix blind, which was the right call.
+WORK_ROOT = Path(os.environ.get("REPAIR_WORK_DIR", "") or Path.home() / ".fantasy-repair")
 LOCK = DATA / "run.lock"
 MANAGER_LOG = DATA / "manager.log"
 JOURNAL = DATA / "journal.jsonl"
@@ -273,10 +278,11 @@ def attempt(issues: list[I.Issue], log_text: str, since: datetime, *, deploy: bo
     now = datetime.now(UTC)
     stamp = now.strftime("%Y%m%dT%H%M%S")
     base = git("rev-parse", "HEAD")
-    wt = REPAIR_DIR / f"wt-{stamp}"
-    base_wt = REPAIR_DIR / f"base-{stamp}"
+    wt = WORK_ROOT / f"wt-{stamp}"
+    base_wt = WORK_ROOT / f"base-{stamp}"
     branch = f"repair/{stamp}"
     REPAIR_DIR.mkdir(parents=True, exist_ok=True)
+    WORK_ROOT.mkdir(parents=True, exist_ok=True)
     _exclude_scratch()
     git("worktree", "add", "-q", "-b", branch, str(wt), base)
     entry = I.LedgerEntry(at=now.isoformat(), status="error", base=base,
@@ -375,10 +381,16 @@ def main() -> int:
 
     since = (datetime.fromisoformat(args.since) if args.since
              else datetime.now(UTC) - timedelta(minutes=90))
-    offset = args.log_offset if args.log_offset is not None else max(
-        0, (MANAGER_LOG.stat().st_size if MANAGER_LOG.exists() else 0) - 200_000)
-    log_text = I.log_slice(MANAGER_LOG, offset)
     ledger = I.read_ledger(LEDGER)
+
+    # With no run to read (no --log-offset from cron) and no --issue, this is
+    # a smoke check, not a scan: the first manual run defaulted to the last
+    # 200 KB of log and repaired a chat message.
+    if args.log_offset is None and not args.issue:
+        log.info("no run slice and no --issue — smoke check only; ledger has %d entries",
+                 len(ledger))
+        return 0
+    log_text = I.log_slice(MANAGER_LOG, args.log_offset or 0) if args.log_offset is not None else ""
 
     if not args.issue and settle_last_deploy(ledger, args.task, args.rc, log_text):
         return 0

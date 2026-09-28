@@ -27,8 +27,19 @@ NOT_CODE = re.compile(
     r"invalid api key|claude auth login|espn_s2|log ?in required|NotLoggedIn",
     re.I,
 )
-_LOG_FAULT = re.compile(r"Traceback|AGENT FAILED|agent run failed|FAILED:|ActionFailed|"
-                        r"Error executing tool|execution failed", re.I)
+#: Crash markers written by CODE, matched case-sensitively. The first version
+#: matched "failed" anywhere, case-insensitive, and its first live run sent a
+#: Polaris chat reply ("...rejected on 09-18 under §6.8.0, which fails...") to
+#: the repair agent as a fault. Failed writes arrive through the journal.
+_LOG_FAULT = re.compile(r"Traceback \(most recent call last\)|AGENT FAILED|"
+                        r"agent run failed|⚠️ \w+ FAILED \(rc=")
+
+
+def _is_prose(line: str) -> bool:
+    """A line that carries the manager's own words, not a crash: the Slack
+    mirror (NOTIFY) and the agent's JSON output."""
+    s = line.lstrip()
+    return "NOTIFY [" in line or s.startswith(('"', "{", "}", "[", "]"))
 
 
 @dataclass
@@ -68,7 +79,8 @@ def collect(journal_path: Path, log_text: str, *, since: datetime) -> list[Issue
             if "fail" in out.lower():
                 issues.append(Issue("write", f"{d.get('what')}: {out}"))
 
-    faults = [ln for ln in log_text.splitlines() if _LOG_FAULT.search(ln)]
+    faults = [ln for ln in log_text.splitlines()
+              if _LOG_FAULT.search(ln) and not _is_prose(ln)]
     if faults and not NOT_CODE.search(log_text[-4000:]):
         tb = _last_traceback(log_text)
         issues.append(Issue("log", faults[-1].strip()[:400],

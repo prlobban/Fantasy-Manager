@@ -157,3 +157,18 @@ def test_the_daily_cap_counts_attempts_not_proofs():
     now = datetime.now(UTC)
     led = [{"at": now.isoformat(), "status": s} for s in ("deployed", "proven", "rejected")]
     assert I.attempts_today(led, now) == 2
+
+
+def test_the_managers_own_words_are_not_a_crash(tmp_path):
+    """2026-09-27: the first live run sent a Polaris chat reply to the repair
+    agent as a fault — it said the trade 'fails' a gate."""
+    log = ('}INFO NOTIFY [info] Re: your message | rejected on 09-18 under §6.8.0, '
+           'which FAILED: six gates failed\n'
+           '  "escalate": "set_lineup execution failed twice",\n')
+    assert I.collect(tmp_path / "none.jsonl", log, since=datetime.now(UTC)) == []
+
+
+def test_a_real_crash_marker_is_still_a_fault(tmp_path):
+    log = "2026-09-27T07:33:59-05:00 ⚠️ sweep FAILED (rc=1)\n"
+    got = I.collect(tmp_path / "none.jsonl", log, since=datetime.now(UTC))
+    assert [i.source for i in got] == ["log"]
