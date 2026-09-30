@@ -798,16 +798,36 @@ def add_drop(add_id: int, drop_id: int | None, reason: str, cites: list[str]) ->
     inside §5. Pass drop_id=None only when a bench spot is genuinely open."""
     s = _snap(refresh=True)
     by_id = {p.espn_id: p for p in s.all_players()}
+    mine = {p.espn_id for p in s.me.roster}
     add_p, drop_p = by_id.get(add_id), by_id.get(drop_id) if drop_id else None
     if add_p is None:
         return _ok(allowed=False, reason=f"player {add_id} not found in the pool")
+
+    # §5.4 — both ends of the swap have to be real before we spend an add.
+    #
+    # 2026-09-29: Tuesday's sweep re-claimed Matthew Golden, whom Saturday's
+    # claim had already landed, and claimed Kyler Murray while naming a drop
+    # that was no longer ours. Neither could execute; ESPN returned a receipt
+    # for each anyway, so all three of that day's claims were charged against
+    # §5.7 and the next morning opened at 2 of 7 adds instead of 5.
+    if add_id in mine:
+        return _ok(allowed=False, refused_by="§5.4",
+                   reason=f"{add_p.name} is already on our roster — this add "
+                          "would spend one of the week's three on nothing")
+    if drop_id is not None and drop_p is None:
+        # A player we have already dropped falls out of the free-agent read as
+        # well, so "not in the snapshot" is the normal shape of a stale drop.
+        # Unknown is not the same as "no drop": fail closed (§10.6).
+        return _ok(allowed=False, refused_by="§5.4",
+                   reason=f"player {drop_id} is not in this snapshot, so he "
+                          "cannot be confirmed as ours to drop")
 
     # §5.5 — the one waiver rule that is a refusal, not a flag (D9): a top-N
     # player by ROS VOR is never dropped for an add. Irreversible, so in code.
     if drop_p is not None:
         from core.manager import waivers as W
 
-        if drop_p.espn_id not in {p.espn_id for p in s.me.roster}:
+        if drop_p.espn_id not in mine:
             return _ok(allowed=False, refused_by="§5.4",
                        reason=f"{drop_p.name} is not on our roster")
         if drop_p.espn_id in W.protected_ids(s.me.roster, _vals(s, window="ros")):
