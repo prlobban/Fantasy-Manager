@@ -128,7 +128,7 @@ GROUPS: tuple[Group, ...] = (
           words=("accept",), optional=True),
     Group("TRADE_REJECT_BUTTON", S.TRADE_REJECT_BUTTON, TRADE,
           words=("decline",), optional=True,
-          note="exact text: 'Decline & Counter' sits beside it and is never clicked"),
+          note="data-trade-type=TRADE_DECLINE; 'Decline & Counter' beside it is never clicked"),
 
     # ── draft room (only resolvable while a room is open) ─────────────────────
     Group("DRAFT_BOARD_CELL_ANY", S.DRAFT_BOARD_CELL_ANY, DRAFT, kind="row",

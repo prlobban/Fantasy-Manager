@@ -238,12 +238,15 @@ TRADE_PROPOSE_BUTTON = "button:has-text('Propose Trade'), a:has-text('Propose Tr
 #: text follows the radio. 🔴 The page loads with "Accept Trade" PRESELECTED and
 #: the button reading "Accept", so a decline that clicks the button without
 #: moving the radio accepts the trade. Choosing decline also paints a second
-#: button, "Decline & Counter". Countering is never authorised (§6.8.13), so both
-#: buttons match on EXACT text, and neither group is healable.
+#: button, "Decline & Counter". Countering is never authorised (§6.8.13), so
+#: neither selector can match it, and neither group is healable. The label sits
+#: in a child <span>, so `button:text-is(...)` matches nothing. Decline carries
+#: `data-trade-type="TRADE_DECLINE"` (counter is `TRADE_AND_COUNTER`); Accept
+#: carries no such attribute and matches on its span's exact text.
 TRADE_ACCEPT_RADIO = "label:has(input[name='respondTradeOptions'][value='accept'])"
 TRADE_DECLINE_RADIO = "label:has(input[name='respondTradeOptions'][value='decline'])"
-TRADE_ACCEPT_BUTTON = "button:text-is('Accept')"
-TRADE_REJECT_BUTTON = "button:text-is('Decline')"
+TRADE_ACCEPT_BUTTON = "button:has(> span:text-is('Accept'))"
+TRADE_REJECT_BUTTON = "button[data-trade-type='TRADE_DECLINE']"
 TRADE_PLAYER_CHECKBOX = "input[type=checkbox], [role=checkbox]"
 #: ✅ VERIFIED 2026-09-08 — the Propose Trade page's footer button reads
 #: "Continue", not "Review Trade" (2026-09-08: all three ticks landed and the

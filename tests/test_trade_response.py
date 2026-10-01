@@ -124,5 +124,5 @@ def test_accept_clicks_accept():
 
 def test_reject_selector_cannot_match_decline_and_counter():
     """§6.8.13: countering is never authorised. `has-text` matched both."""
-    assert "text-is" in S.TRADE_REJECT_BUTTON
-    assert "has-text" not in S.TRADE_REJECT_BUTTON
+    assert S.TRADE_REJECT_BUTTON == "button[data-trade-type='TRADE_DECLINE']"
+    assert "has-text" not in S.TRADE_REJECT_BUTTON + S.TRADE_ACCEPT_BUTTON

@@ -733,7 +733,7 @@ def trade_review_path(league_id: int, team_id: int, offer_id: str) -> str:
 
 def respond_to_trade(page, player_names: list[str], choice: str) -> None:
     """Answer an offer on its review page: move the radio, prove it moved, then
-    click the ONE button whose exact text matches.
+    click the ONE submit button for that choice.
 
     The page loads with Accept preselected, so every step fails closed before
     the click: a page that doesn't name every player, a radio that didn't move,
