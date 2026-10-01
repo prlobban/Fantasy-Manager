@@ -45,7 +45,8 @@ def test_healable_groups_all_exist():
 
 def test_irreversible_writes_are_not_healable():
     """A write with no reverse is never re-pointed by a guess (§10.6)."""
-    for name in ("DRAFT_BUTTON", "TRADE_SEND_BUTTON", "TRADE_ACCEPT_BUTTON"):
+    for name in ("DRAFT_BUTTON", "TRADE_SEND_BUTTON", "TRADE_ACCEPT_BUTTON",
+                 "TRADE_REJECT_BUTTON", "TRADE_ACCEPT_RADIO", "TRADE_DECLINE_RADIO"):
         assert name not in G.HEALABLE, f"{name} must stay human"
 
 

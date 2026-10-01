@@ -119,10 +119,16 @@ GROUPS: tuple[Group, ...] = (
     Group("TRADE_SEND_BUTTON", S.TRADE_SEND_BUTTON, TRADE,
           words=("send", "propose", "offer"), optional=True,
           note="on the page AFTER review; never yet observed live"),
+    Group("TRADE_ACCEPT_RADIO", S.TRADE_ACCEPT_RADIO, TRADE, kind="input",
+          words=("accept", "trade"), optional=True,
+          note="on /football/tradereview; preselected on load (verified 2026-09-30)"),
+    Group("TRADE_DECLINE_RADIO", S.TRADE_DECLINE_RADIO, TRADE, kind="input",
+          words=("decline", "trade"), optional=True),
     Group("TRADE_ACCEPT_BUTTON", S.TRADE_ACCEPT_BUTTON, TRADE,
           words=("accept",), optional=True),
     Group("TRADE_REJECT_BUTTON", S.TRADE_REJECT_BUTTON, TRADE,
-          words=("reject", "decline"), optional=True),
+          words=("decline",), optional=True,
+          note="exact text: 'Decline & Counter' sits beside it and is never clicked"),
 
     # ── draft room (only resolvable while a room is open) ─────────────────────
     Group("DRAFT_BOARD_CELL_ANY", S.DRAFT_BOARD_CELL_ANY, DRAFT, kind="row",

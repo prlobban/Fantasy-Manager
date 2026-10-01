@@ -972,6 +972,17 @@ def propose_trade(to_team: int, give_ids: list[int], get_ids: list[int],
                value_check=why, receipt=str(receipt) if receipt else None)
 
 
+def _verify_offer_gone(offer_id: str, receipt) -> None:
+    """An answered offer leaves ESPN's pending list. That, not the click, is
+    what marks the receipt verified."""
+    if receipt is None:
+        return
+    try:
+        receipt.verified = all(po.offer_id != offer_id for po, _ in _offers(_snap(refresh=True)))
+    except Exception as e:
+        log.warning("could not re-read offers to verify %s: %s", offer_id, e)
+
+
 @mcp.tool()
 def reject_trade(offer_id: str, reason: str, cites: list[str]) -> str:
     """Reject an incoming offer. Always allowed — the default answer is no."""
@@ -995,10 +1006,11 @@ def reject_trade(offer_id: str, reason: str, cites: list[str]) -> str:
 
         with EspnSession(headless=True) as sess:
             return A.reject_trade(
-                sess, s.facts.settings.league_id, s.facts.settings.season, offer_id, names
+                sess, s.facts.settings.league_id, s.my_team_id, offer_id, names
             )
 
     gate, receipt = write_gate.execute(action, perform, skip_health=True)
+    _verify_offer_gone(offer_id, receipt)
     return _ok(allowed=gate.allowed, reason=gate.reason,
                receipt=str(receipt) if receipt else None)
 
@@ -1036,10 +1048,11 @@ def accept_trade(offer_id: str, reason: str, cites: list[str]) -> str:
 
         with EspnSession(headless=True) as sess:
             return A.accept_trade(
-                sess, s.facts.settings.league_id, s.facts.settings.season, offer_id, names
+                sess, s.facts.settings.league_id, s.my_team_id, offer_id, names
             )
 
     gate, receipt = write_gate.execute(action, perform, skip_health=True)
+    _verify_offer_gone(offer_id, receipt)
     gates_txt = "\n".join(
         f"{'✓' if c.passed else '✗'} {c.section} {c.name}: {c.detail}" for c in result.checks
     )

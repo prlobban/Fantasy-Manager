@@ -656,33 +656,6 @@ def drop_player(s: EspnSession, league_id: int, team_id: int, season: int,
 # ── trades ───────────────────────────────────────────────────────────────────
 
 
-def _trade_button(page, player_names: list[str], *candidates: str, what: str):
-    """The button on the offer card that mentions EVERY player in the offer.
-
-    Two pending offers render two Accept buttons; "click the first" would act
-    on whichever ESPN listed first. With no player names to anchor on, refuse.
-    """
-    import re
-
-    if not player_names:
-        raise ActionFailed(f"cannot locate {what}: no player names supplied to anchor the card")
-    cards = page.locator(S.ANY_ROW)
-    for n in player_names:
-        cards = cards.filter(has_text=re.compile(re.escape(n), re.I))
-    if cards.count() == 0:
-        raise ActionFailed(f"no offer card mentions all of {player_names} — cannot find {what}")
-    for sel in candidates:
-        for group in sel.split(","):
-            group = group.strip()
-            try:
-                loc = cards.locator(group)
-                if loc.count() > 0:
-                    return loc
-            except Exception:
-                continue
-    raise ActionFailed(f"offer card for {player_names} has no {what}")
-
-
 def propose_trade(s: EspnSession, league_id: int, season: int, to_team_id: int,
                   give: list[tuple[int, str]], get: list[tuple[int, str]]) -> Receipt:
     """§6.1–§6.7 — send an outgoing offer. Reached ONLY through write_gate,
@@ -746,28 +719,84 @@ def propose_trade(s: EspnSession, league_id: int, season: int, to_team_id: int,
     return _receipt(s, "propose trade", detail, verified=sent)
 
 
-def accept_trade(s: EspnSession, league_id: int, season: int, offer_id: str,
+def trade_review_path(league_id: int, team_id: int, offer_id: str) -> str:
+    """The page an incoming offer is answered on.
+
+    ✅ VERIFIED 2026-09-30: it is the "Review" link inside the team page's
+    Pending Moves lightbox. `fromTeamId` is OUR team id; that's ESPN's
+    spelling, not the proposer's. The old `/football/tradeoffers` route is a
+    404, which is why every reject before this date failed.
+    """
+    return (f"/football/tradereview?leagueId={league_id}"
+            f"&transactionId={offer_id}&fromTeamId={team_id}")
+
+
+def respond_to_trade(page, player_names: list[str], choice: str) -> None:
+    """Answer an offer on its review page: move the radio, prove it moved, then
+    click the ONE button whose exact text matches.
+
+    The page loads with Accept preselected, so every step fails closed before
+    the click: a page that doesn't name every player, a radio that didn't move,
+    or the opposite button still showing all raise with nothing submitted.
+    """
+    if choice not in ("accept", "decline"):
+        raise ActionFailed(f"unknown trade response {choice!r}")
+    if not player_names:
+        raise ActionFailed("cannot answer a trade with no player names to check the page against")
+    body = page.inner_text("body").lower()
+    missing = [n for n in player_names if n.lower() not in body]
+    if missing:
+        raise ActionFailed(f"the review page does not show {missing}: not this offer, nothing clicked")
+
+    radio_sel, other_radio_sel, button_sel, other_button_sel = (
+        (S.TRADE_ACCEPT_RADIO, S.TRADE_DECLINE_RADIO, S.TRADE_ACCEPT_BUTTON, S.TRADE_REJECT_BUTTON)
+        if choice == "accept" else
+        (S.TRADE_DECLINE_RADIO, S.TRADE_ACCEPT_RADIO, S.TRADE_REJECT_BUTTON, S.TRADE_ACCEPT_BUTTON)
+    )
+    radio = page.locator(radio_sel)
+    if radio.count() != 1:
+        raise ActionFailed(f"expected one {choice} radio, found {radio.count()}",
+                           group="TRADE_ACCEPT_RADIO" if choice == "accept" else "TRADE_DECLINE_RADIO")
+    radio.first.click()
+    page.wait_for_timeout(600)
+    picked = page.locator(radio_sel + " input").first.is_checked()
+    other = page.locator(other_radio_sel + " input")
+    if not picked or (other.count() and other.first.is_checked()):
+        raise ActionFailed(f"the {choice} radio did not take; nothing submitted")
+
+    if page.locator(other_button_sel).count():
+        raise ActionFailed(f"the opposite submit button is still showing after choosing {choice}; "
+                           "nothing submitted")
+    btn = page.locator(button_sel)
+    if btn.count() != 1:
+        raise ActionFailed(f"expected one {choice} submit button, found {btn.count()}",
+                           group="TRADE_ACCEPT_BUTTON" if choice == "accept" else "TRADE_REJECT_BUTTON")
+    btn.first.click()
+    page.wait_for_timeout(1500)
+    confirm = S.first_present(page, S.CONFIRM_BUTTON)
+    if confirm is not None and confirm.count() and not confirm.first.is_disabled():
+        confirm.first.click()
+        page.wait_for_timeout(1500)
+
+
+def _answer_trade(s: EspnSession, league_id: int, team_id: int, offer_id: str,
+                  player_names: list[str], choice: str) -> Receipt:
+    page = s.goto(trade_review_path(league_id, team_id, offer_id),
+                  hydrate_for=S.TRADE_DECLINE_RADIO)
+    s.dismiss_overlays()
+    respond_to_trade(page, player_names, choice)
+    # Unverified here on purpose: the MCP tool re-reads ESPN's pending offers
+    # and only that says whether the offer is actually gone.
+    action = "accept trade" if choice == "accept" else "reject trade"
+    return _receipt(s, action, f"offer {offer_id}", verified=False)
+
+
+def accept_trade(s: EspnSession, league_id: int, team_id: int, offer_id: str,
                  player_names: list[str]) -> Receipt:
     """§6.8 — reached ONLY after a clean gauntlet sweep and the cool-down."""
-    page = s.goto(f"/football/tradeoffers?leagueId={league_id}&seasonId={season}")
-    s.dismiss_overlays()
-    btn = _trade_button(page, player_names, S.TRADE_ACCEPT_BUTTON, what="an Accept button")
-    btn.first.click()
-    confirm = S.first_present(page, S.CONFIRM_BUTTON)
-    if confirm is not None:
-        confirm.first.click()
-    page.wait_for_timeout(1500)
-    return _receipt(s, "accept trade", f"offer {offer_id}", verified=False)
+    return _answer_trade(s, league_id, team_id, offer_id, player_names, "accept")
 
 
-def reject_trade(s: EspnSession, league_id: int, season: int, offer_id: str,
+def reject_trade(s: EspnSession, league_id: int, team_id: int, offer_id: str,
                  player_names: list[str]) -> Receipt:
-    page = s.goto(f"/football/tradeoffers?leagueId={league_id}&seasonId={season}")
-    s.dismiss_overlays()
-    btn = _trade_button(page, player_names, S.TRADE_REJECT_BUTTON, what="a Reject button")
-    btn.first.click()
-    confirm = S.first_present(page, S.CONFIRM_BUTTON)
-    if confirm is not None:
-        confirm.first.click()
-    page.wait_for_timeout(1200)
-    return _receipt(s, "reject trade", f"offer {offer_id}", verified=False)
+    return _answer_trade(s, league_id, team_id, offer_id, player_names, "decline")

@@ -233,8 +233,17 @@ PLAYER_SEARCH = (
 # ── trades ───────────────────────────────────────────────────────────────────
 
 TRADE_PROPOSE_BUTTON = "button:has-text('Propose Trade'), a:has-text('Propose Trade')"
-TRADE_ACCEPT_BUTTON = "button:has-text('Accept')"
-TRADE_REJECT_BUTTON = "button:has-text('Reject'), button:has-text('Decline')"
+#: ✅ VERIFIED 2026-09-30 on /football/tradereview, the page an incoming offer's
+#: "Review" link opens. It answers with a radio pair, then ONE submit button whose
+#: text follows the radio. 🔴 The page loads with "Accept Trade" PRESELECTED and
+#: the button reading "Accept", so a decline that clicks the button without
+#: moving the radio accepts the trade. Choosing decline also paints a second
+#: button, "Decline & Counter". Countering is never authorised (§6.8.13), so both
+#: buttons match on EXACT text, and neither group is healable.
+TRADE_ACCEPT_RADIO = "label:has(input[name='respondTradeOptions'][value='accept'])"
+TRADE_DECLINE_RADIO = "label:has(input[name='respondTradeOptions'][value='decline'])"
+TRADE_ACCEPT_BUTTON = "button:text-is('Accept')"
+TRADE_REJECT_BUTTON = "button:text-is('Decline')"
 TRADE_PLAYER_CHECKBOX = "input[type=checkbox], [role=checkbox]"
 #: ✅ VERIFIED 2026-09-08 — the Propose Trade page's footer button reads
 #: "Continue", not "Review Trade" (2026-09-08: all three ticks landed and the
