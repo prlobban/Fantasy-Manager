@@ -13,6 +13,13 @@ returns `transactions`, each with:
     proposedDate   epoch ms
     items          [{playerId, fromTeamId, toTeamId, type: "TRADE"}, ...]
 
+✅ VERIFIED 2026-09-30, live: a decline is NOT a status change on the offer.
+ESPN writes a second record with `executionType: "CANCEL"`, `status:
+"CANCELED"`, `isPending: true` and `relatedTransactionId` = the offer, and
+leaves the offer itself `PENDING` until that processes. Read naively, a decline
+looks like the offer still open plus a brand-new one, and the next sweep
+declines it again.
+
 A `scoringPeriodId` is required for the current season or the key is absent.
 When there are no matching transactions the key is absent rather than empty;
 that is read as "no offers", not as an error.
@@ -54,10 +61,18 @@ def pending_offers(c: EspnClient | None = None, *, my_team_id: int | None = None
         filters={"transactions": {"filterType": {"value": ["TRADE_PROPOSAL"]}}},
     )
     raw = data.get("transactions") or []
+    answered = {
+        str(t["relatedTransactionId"]) for t in raw
+        if t.get("relatedTransactionId") and str(t.get("executionType", "")).upper() == "CANCEL"
+    }
     out: list[PendingOffer] = []
     for t in raw:
+        if str(t.get("executionType", "")).upper() == "CANCEL":
+            continue  # a decline or withdrawal record, not an offer
+        if str(t.get("id")) in answered:
+            continue  # already declined or withdrawn; ESPN just hasn't processed it
         status = str(t.get("status", "")).upper()
-        if status != "PENDING" and not t.get("isPending"):
+        if status != "PENDING" and not (status == "" and t.get("isPending")):
             continue
         proposer = int(t.get("teamId", -1))
         if proposer == me:

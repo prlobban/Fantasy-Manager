@@ -122,6 +122,42 @@ def test_accept_clicks_accept():
     assert page.clicked == ["Accept"]
 
 
+class _Client:
+    def __init__(self, raw):
+        self.raw = raw
+
+    def get_view(self, *_a, **_k):
+        return {"transactions": self.raw}
+
+
+def _tx(id_, team, status, *, pending=True, kind="EXECUTE", related=None):
+    return {"id": id_, "teamId": team, "status": status, "isPending": pending,
+            "executionType": kind, "relatedTransactionId": related,
+            "proposedDate": 1790801400244,
+            "items": [{"playerId": 1, "fromTeamId": 7, "toTeamId": 8},
+                      {"playerId": 2, "fromTeamId": 8, "toTeamId": 7}]}
+
+
+def test_a_declined_offer_is_not_pending_and_its_cancel_is_not_an_offer():
+    """The live 2026-09-30 read after the decline landed: offer still PENDING,
+    plus a CANCELED/isPending record pointing at it. Zero open offers."""
+    from core.espn import trades as tr
+
+    raw = [
+        _tx("ede95b6e", 7, "PENDING"),
+        _tx("c748abbb", 7, "CANCELED", kind="CANCEL", related="ede95b6e"),
+        _tx("d3953cfd", 8, "PENDING"),  # our own outgoing offer
+    ]
+    assert tr.pending_offers(_Client(raw), my_team_id=8, week=4) == []
+
+
+def test_an_unanswered_offer_still_reads_open():
+    from core.espn import trades as tr
+
+    got = tr.pending_offers(_Client([_tx("ede95b6e", 7, "PENDING")]), my_team_id=8, week=4)
+    assert [o.offer_id for o in got] == ["ede95b6e"]
+
+
 def test_reject_selector_cannot_match_decline_and_counter():
     """§6.8.13: countering is never authorised. `has-text` matched both."""
     assert S.TRADE_REJECT_BUTTON == "button[data-trade-type='TRADE_DECLINE']"
