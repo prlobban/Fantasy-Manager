@@ -210,6 +210,61 @@ def test_an_add_cannot_gain_at_a_slot_that_is_already_locked():
     )
 
 
+# ── the drop ────────────────────────────────────────────────────────────────
+
+
+def _vv(pid, pts, vor, *, locked=False) -> Valuation:
+    return Valuation(espn_id=pid, window="week", points=pts, vor=vor, tier=1,
+                     availability=1.0, locked=locked, components={"base": pts})
+
+
+def _two_qb_roster():
+    """Our 2026-10-05 shape: a dead second QB at a one-slot position, plus one
+    spare receiver. `drop_order` puts the surplus QB first, which is right on
+    doctrine (D5.2) and is exactly why he was offered as the drop all morning."""
+    murray = pl(20, Pos.QB, 0.5, name="Murray", actual=0.3, game=played())
+    spare = pl(21, Pos.WR, 2.0, name="Spare", game=upcoming())
+    roster = [pl(1, Pos.QB, 19.6), pl(3, Pos.RB, 18), pl(4, Pos.RB, 14),
+              pl(6, Pos.WR, 17), pl(7, Pos.WR, 13), pl(9, Pos.TE, 11),
+              murray, spare]
+    vals = {p.espn_id: _vv(p.espn_id, p.proj_week[1], float(p.proj_week[1]))
+            for p in roster}
+    vals[murray.espn_id] = _vv(murray.espn_id, 0.3, 0.5, locked=True)
+    return roster, vals
+
+
+def test_a_locked_player_is_never_offered_as_the_drop():
+    """🔴 2026-10-05 (Monday 07:30): core named Kyler Murray as the drop behind
+    every candidate on the menu. His week-4 game had been final since Sunday, so
+    ESPN's row read LOCKED rather than DROP — the Carnell Tate claim cleared
+    every gate and then failed in the browser with "no enabled DROP button on
+    the row for 'Kyler Murray'"."""
+    s = settings_k()
+    roster, vals = _two_qb_roster()
+
+    drop, _, reason, _ = waivers.choose_drop(roster, vals, s, current_week=1)
+
+    assert drop is not None and drop.name == "Spare", (
+        "a player whose game has kicked off cannot be dropped, however obvious "
+        "a cut he is"
+    )
+    assert "Murray" in reason, "say who the clock took off the table"
+
+
+def test_a_roster_with_nobody_droppable_this_week_says_so():
+    """Every body locked is the ordinary Monday shape. It must read as 'not
+    until the slate rolls over', not as a drop we can make."""
+    s = settings_k()
+    roster, vals = _two_qb_roster()
+    for p in roster:
+        p.games = {1: played()}
+
+    drop, _, reason, _ = waivers.choose_drop(roster, vals, s, current_week=1)
+
+    assert drop is None
+    assert "locked" in reason.lower()
+
+
 # ── placeholder kickoffs ─────────────────────────────────────────────────────
 
 

@@ -262,6 +262,7 @@ def choose_drop(
 
     droppable: list[tuple[int, float, Player]] = []
     held: list[str] = []
+    locked: list[str] = []
     order = roster_mod.drop_order(roster, ros, settings)
     for i, pl in enumerate(order):
         v = valuations.get(pl.espn_id)
@@ -269,6 +270,20 @@ def choose_drop(
             continue
         if pl.injury_status is InjuryStatus.IR:
             continue  # IR does not occupy a bench spot
+
+        # §4.8 — ESPN will not drop a player whose game has kicked off: his row
+        # reads LOCKED, not DROP. §5.10 refused this for a locked K or D/ST
+        # incumbent (2026-09-14) and that was only half the rule.
+        #
+        # 2026-10-05: the Monday sweep offered Kyler Murray — the surplus QB,
+        # the right cut on doctrine, and final since Sunday afternoon — as the
+        # drop behind every candidate. The Carnell Tate claim cleared every
+        # gate and failed in the browser on "no enabled DROP button on the row
+        # for 'Kyler Murray'". The clock has to narrow the drop, not just the
+        # gain.
+        if pl.game_locked(current_week):
+            locked.append(pl.name)
+            continue
 
         # §5.5 — hold an injured player who is coming back soon, but ONLY while
         # a bench spot exists.
@@ -283,6 +298,11 @@ def choose_drop(
 
     if not droppable:
         reason = "nobody droppable — every bench player is protected (§5.5)"
+        if locked:
+            reason = (f"nobody droppable this week — {', '.join(locked)} "
+                      "already played, and ESPN will not drop a locked player "
+                      "(§4.8). An add that needs a drop has to wait for the "
+                      "slate to roll over")
         if held:
             reason += f"; holding {', '.join(held)}"
         return None, 0.0, reason, False
@@ -300,6 +320,9 @@ def choose_drop(
     reason = f"{why} ({ros_vor:.1f} ROS VOR)"
     if tradeable:
         reason += f" — D4.5: {ros_vor:.1f} ROS VOR is trade capital; offer him before cutting"
+    if locked:
+        reason += (f"; {', '.join(locked)} would be the cut on value but "
+                   "has already played — ESPN locks the row (§4.8)")
     if held:
         reason += f"; holding {', '.join(held)} per §5.5"
     return pl, cost, reason, tradeable

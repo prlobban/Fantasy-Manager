@@ -838,6 +838,26 @@ def add_drop(add_id: int, drop_id: int | None, reason: str, cites: list[str]) ->
                        reason=f"{drop_p.name} is a top-{top_n} player by ROS VOR — never "
                               "dropped; trade him if you must move him")
 
+        # §4.8 — a drop ESPN has locked is a write that cannot land. His row in
+        # the claim modal reads LOCKED, not DROP, so Continue stays disabled and
+        # the add goes nowhere. §5.10 below refuses this for a locked K or D/ST
+        # incumbent; this is the same rule for everyone else.
+        #
+        # 2026-10-05: claim Carnell Tate, drop Kyler Murray. Murray's week-4
+        # game had been final since Sunday. Every gate allowed it, a browser
+        # opened, and it died on "no enabled DROP button on the row for 'Kyler
+        # Murray'" — one claim attempt and our priority-7 slot risked for a
+        # transaction ESPN was never going to accept.
+        if drop_p.game_locked(s.week):
+            return _ok(
+                allowed=False, refused_by="§4.8",
+                reason=f"{drop_p.name}'s week-{s.week} game has already kicked "
+                       "off, so ESPN will not drop him — his row reads LOCKED "
+                       "and Continue never enables. Drop someone whose game is "
+                       f"still to come, or claim {add_p.name} once the slate "
+                       "has rolled over.",
+            )
+
     # §5.10 / D6.4 — never stream into a slot that is already settled.
     #
     # A K or D/ST is a one-week rental whose whole value is this week's matchup

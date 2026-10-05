@@ -149,3 +149,69 @@ def test_a_drop_we_can_see_but_do_not_own_is_still_refused(harness, monkeypatch)
     assert out["refused_by"] == "§5.4"
     assert "Someone Else's WR" in out["reason"]
     assert writes == [] and counted == []
+
+
+# ── 3. the drop ESPN had already locked ──────────────────────────────────────
+#
+# 2026-10-05 (Monday 07:30): the Carnell Tate claim cleared §5.4, §5.5, §5.7 and
+# the write gate, opened a browser, and died on "no enabled DROP button on the
+# row for 'Kyler Murray'". Murray's week-4 game had been final since Sunday
+# afternoon, and a locked row reads LOCKED, not DROP. §5.10 already refused this
+# for the STREAMED half of the roster (a locked K or D/ST incumbent); nothing
+# refused it for anyone else.
+
+
+def qb(pid: int, name: str, game=None) -> Player:
+    p = Player(espn_id=pid, name=name, pos=Pos.QB, pro_team="ARI")
+    if game is not None:
+        p.games = {4: game}
+    return p
+
+
+def finished():
+    """Sunday's game, read on Monday morning: kicked off and official."""
+    from datetime import UTC, datetime, timedelta
+
+    from core.model.schema import ProGame
+
+    return ProGame(week=4, kickoff=datetime.now(UTC) - timedelta(hours=20),
+                   stats_official=True)
+
+
+def still_to_come():
+    from datetime import UTC, datetime, timedelta
+
+    from core.model.schema import ProGame
+
+    return ProGame(week=4, kickoff=datetime.now(UTC) + timedelta(hours=18))
+
+
+def test_a_drop_whose_game_is_already_locked_is_refused(harness, monkeypatch):
+    """🔴 2026-10-05: claim Carnell Tate, drop Kyler Murray — allowed by every
+    gate, refused by ESPN, because Murray's week-4 game was already over."""
+    M, writes, counted = harness
+    state = FakeState(roster=[qb(3917315, "Kyler Murray", finished())],
+                      pool=[wr(4432773, "Carnell Tate")])
+
+    out = call(M, state, monkeypatch, add_id=4432773, drop_id=3917315)
+
+    assert out["allowed"] is False
+    assert out["refused_by"] == "§4.8"
+    assert "Kyler Murray" in out["reason"]
+    assert writes == [], "a drop ESPN cannot accept never reaches the browser"
+    assert counted == [], "§5.7 must not be charged for a claim that cannot land"
+
+
+def test_a_drop_whose_game_is_still_to_come_is_allowed(harness, monkeypatch):
+    """The guard is per PLAYER, not per day. A Monday sweep that still has one
+    unplayed body on the bench can still spend its add — the alternative, a
+    blanket Monday freeze, would cost us the week's freshest wire."""
+    M, writes, counted = harness
+    state = FakeState(roster=[qb(3917315, "Kyler Murray", still_to_come())],
+                      pool=[wr(4432773, "Carnell Tate")])
+
+    out = call(M, state, monkeypatch, add_id=4432773, drop_id=3917315)
+
+    assert out["allowed"] is True
+    assert len(writes) == 1
+    assert counted == [(4432773, 3917315, False)]
