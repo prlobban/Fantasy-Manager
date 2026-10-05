@@ -39,6 +39,14 @@ log = logging.getLogger("manage")
 
 def _print_core_view(packet: dict) -> None:
     box = packet.get("inbox") or {}
+    lc = packet.get("league_chat") or {}
+    if lc.get("unavailable"):
+        print(f"\nCHAT    unreadable — {lc['unavailable']}")
+    for c in lc.get("conversations") or []:
+        flag = "  ← awaiting our reply" if c.get("awaiting_our_reply") else ""
+        print(f"\nCHAT    {c['kind']} with {', '.join(c['with'])}{flag}")
+        for ln in (c.get("lines") or [])[-4:]:
+            print(f"  {ln['at'][5:16]} {ln['from'][:28]:28} {ln['text'][:110]}")
     if box.get("unavailable"):
         print(f"\nINBOX   unreadable — {box['unavailable']}")
     elif box.get("messages"):
@@ -269,6 +277,28 @@ def _answer_inbox(packet: dict, out: dict) -> None:
     mark_read(msgs[-1]["ts"])
 
 
+def _post_chat_drafts(packet: dict, out: dict) -> None:
+    """§8.10 — the agent's chat replies go to Pearce for approval, never to ESPN.
+
+    The seen-cursor moves here, after a run that reached the agent, for the
+    same reason the inbox cursor does: a crash re-shows a message rather than
+    swallowing it.
+    """
+    from core import chat_drafts
+    from core.espn import chat
+
+    block = packet.get("league_chat") or {}
+    for line in chat_drafts.post(out.get("chat_drafts") or [], block):
+        log.info("chat drafts: %s", line)
+    if block.get("conversations") is not None:
+        newest = 0
+        for c in block["conversations"]:
+            for ln in c.get("lines") or []:
+                at = datetime.fromisoformat(ln["at"])
+                newest = max(newest, int(at.timestamp() * 1000))
+        chat.mark_seen(newest)
+
+
 def main() -> int:
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
     ap = argparse.ArgumentParser()
@@ -341,6 +371,7 @@ def main() -> int:
                f"{len(out.get('prior_proposals') or [])} prior change(s) proposed\n{hist}")
     else:
         _answer_inbox(packet, out)
+        _post_chat_drafts(packet, out)
         brief, lines = _digest(out, decisions, names, read_only=read_only, scope=args.task)
         quiet = args.task == "lineup" and not decisions and not out.get("actions")
         if not quiet:

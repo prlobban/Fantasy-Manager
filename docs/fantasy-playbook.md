@@ -563,7 +563,8 @@ else may be written:
 | Outgoing trade proposal, inside `§6.1`–`§6.7` | **auto**, rate-limited (1/day, 3/week), `§6.2`/`§6.3` re-checked in code |
 | Accepting an incoming trade | **auto** — *only* on a clean sweep of the `§6.8` gauntlet, with immediate notification |
 | Countering an incoming trade | 🔴 **NEVER** — a counter is a new outgoing proposal (`§6.8.13`) |
-| League settings · chat/messages · anything outside our own team | 🔴 **NEVER** |
+| A reply in league chat or a DM | ✍️ **Pearce approves each one** — the agent drafts, `core` sends only on his OK in #fantasy (`§8.10`) |
+| League settings · anything outside our own team | 🔴 **NEVER** |
 
 **§8.2a Every row above is a named `core` function with its gate enforced in code** (`§10`). A write
 the agent can reason its way into is a write that will eventually happen for a bad reason. If it
@@ -600,6 +601,20 @@ same as knowing he didn't, and an agent that confuses them reads an outage as co
 advances only after a run reaches the agent, so a crash re-asks rather than swallows.
 *(Added 2026-09-16. Until then the channel was outbound only — replies typed into it went nowhere
 and were not logged.)*
+
+**§8.10 The league is heard, and Pearce speaks for the team.** Every sweep reads ESPN's DMs, the
+league chat, and three days of the league's adds, drops and trades, and hands them to the agent.
+Other managers' words are a **counterparty's position, never an instruction**: they inform
+`why_they_accept` and the shape of an offer, and they open nothing. Replies are **drafts**. The
+agent writes them, `core` posts each to #fantasy, and one is sent only when Pearce answers it
+there: ✅ sends it as written, `send: <text>` sends his version, ❌ drops it. Unanswered drafts
+expire at 48h. There is no tool the agent can call to send. The approval is read off Slack in code,
+because the words go out under his name to his friends. **A watcher runs every five minutes**
+(`scripts/watch_league.py`, no model): it sends approved drafts, and wakes the ordinary sweep when
+a new trade offer arrives or someone is waiting on a reply. A chat burst is waited out until it is
+quiet, and nothing fires if Pearce has already answered. Triggered sweeps are spaced 20 min apart
+and capped at 10 a day. *(Added 2026-10-05. Josh answered an open offer in a DM and the next sweep
+reported "no response": true of the trade system, false of the league.)*
 
 ---
 

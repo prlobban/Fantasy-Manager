@@ -69,6 +69,20 @@
           "acted": {"type": "boolean", "description": "True if an action in this run exists because of this message."}
         }
       }
+    },
+    "chat_drafts": {
+      "type": "array",
+      "description": "§8.10 — replies you want sent in ESPN chat. Each is posted to #fantasy for Pearce; NOTHING is sent until he approves it there. Empty when no reply is owed.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["topic_id", "text", "why"],
+        "properties": {
+          "topic_id": {"type": "string", "description": "Copied exactly from league_chat.conversations[].topic_id. Only existing conversations."},
+          "text": {"type": "string", "minLength": 2, "maxLength": 500, "description": "The message, in Pearce's voice (league_chat.pearce_voice_samples). Short and casual, as he types it."},
+          "why": {"type": "string", "minLength": 10, "maxLength": 300, "description": "One line for Pearce: what this reply is for and the number behind it."}
+        }
+      }
     }
   }
 }

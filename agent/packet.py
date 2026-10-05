@@ -208,6 +208,14 @@ def _inbox_block() -> dict[str, Any]:
     }
 
 
+def _league_chat_block() -> dict[str, Any]:
+    """§8.10 — DMs, league chat and the league's move log. Never raises."""
+    from core import chat_drafts
+    from core.espn import chat
+
+    return chat.packet_block(chat.read(), pending=chat_drafts.for_packet())
+
+
 def build(task: str, state: ls_mod.LeagueState | None = None,
           *, scope: str = "all") -> dict[str, Any]:
     """`scope` narrows a daily run: "lineup" (the Sunday pass) omits the
@@ -309,13 +317,18 @@ def build(task: str, state: ls_mod.LeagueState | None = None,
         # And what Pearce said since the last one (§8.9, D10). Memory is what
         # it did; the inbox is what he wants.
         "inbox": _inbox_block(),
+        # And what the rest of the league is saying: DMs, league chat, the
+        # move log (§8.10). Before this the bot negotiated deaf.
+        "league_chat": _league_chat_block(),
         "guardrails": {
             "kill_switch": kill_switch.state(),
             "writes_allowed": [
                 "set_lineup", "add_drop", "propose_trade", "accept_trade (13/13 gauntlet only)",
                 "reject_trade", "notify",
             ],
-            "never": ["counter-offer", "league settings", "chat", "other teams"],
+            "never": ["counter-offer", "league settings", "sending chat yourself", "other teams"],
+            "chat": ("draft only: write `chat_drafts`; core posts them to #fantasy and sends "
+                     "one only after Pearce approves it there (§8.10)"),
             "hard_in_code": [
                 "§5.7 three adds a rolling week", "§5.4 roster room",
                 "§5.5 never drop a top-N player by ROS VOR",

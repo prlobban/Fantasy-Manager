@@ -201,8 +201,16 @@ def read(since: str | None = None) -> Inbox:
                        f"a member of the channel")
             return Inbox(error=f"conversations.history: {err}", cursor=last)
 
+        # A chat-draft thread is an approval channel (§8.10), handled by the
+        # watcher within minutes. Reading "send" as a question for tomorrow's
+        # sweep would answer an approval with a lecture.
+        from core.chat_drafts import thread_ts_set
+        drafts = thread_ts_set()
+
         found: list[Message] = []
         for m in hist.get("messages", []):
+            if m["ts"] in drafts:
+                continue
             if float(m["ts"]) > since_f and _is_human(m):
                 found.append(_msg(m, in_thread=False))
             # A reply under an older digest is the natural way to answer it,
