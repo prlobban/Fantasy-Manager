@@ -46,6 +46,70 @@ def _clamp_override(raw: float, cap: float) -> float:
     return max(1.0 - cap, min(1.0 + cap, raw))
 
 
+def role_rate(player: Player, current_week: int) -> float | None:
+    """His in-season role, as a weekly rate: the LOWER of ESPN's two most
+    recent weekly projections at or before `current_week`, or None when there
+    are not two to read.
+
+    Two, because one week is a spot start, not a role: ESPN prices a backup
+    quarterback's one-game start into his season row and nothing more (his
+    season projection equals that week's, exactly). Two consecutive weekly
+    projections at a starter's level are ESPN itself saying the job is his.
+    The lower of them, because a role has to be proven at its weakest recent
+    week before it reprices the rest of his season. Bye weeks are not
+    evidence and are skipped; a 0.0 week (OUT, no role) is evidence, and it
+    returns 0.0 — this can only ever raise a valuation, never cut one.
+    """
+    weeks = [w for w in sorted(player.proj_week, reverse=True)
+             if w <= current_week and w != player.bye_week
+             and (not player.games or w in player.games)]
+    if len(weeks) < 2:
+        return None
+    return min(player.proj_week[w] for w in weeks[:2])
+
+
+def ros_base(
+    player: Player, *, current_week: int, weeks_remaining: int,
+) -> tuple[float, dict[str, float]]:
+    """The rest-of-season base projection, and the components that made it.
+
+    ESPN's season row (`proj_season`) is refreshed in-season, and it is on a
+    rest-of-season scale — every remaining game, this week included: across
+    the live pool in week 5 of 2026 it came to 1.01x (weekly projection x
+    games left on his schedule), median of 111 rostered players, 0.86-1.10
+    p10-p90. But it moves slowly, and it lags a role change by weeks. Found
+    2026-10-08: Emanuel Wilson, a third-stringer promoted to lead back, carried
+    a 24.9 season row against weekly projections of 11.1 and 12.7, so his ROS
+    VOR read -109.2 and §4.7 benched him for a QUESTIONABLE D'Andre Swift.
+
+    🔴 The trigger has no tunable. A season row that cannot cover even the
+    fantasy weeks left at his lowest recent weekly projection
+    (`role_rate x weeks_remaining > proj_season`) is not a forecast of a role
+    that pays less — it is a forecast of a different role. In week 5 that is
+    a season row under 0.77x the scale above, below the pool's p10, so an
+    established player's ordinary matchup noise never trips it, and it gets
+    stricter as the season runs down. When it trips, ROS is rebuilt from the
+    weekly rate over the games left on his schedule — the scale every other
+    player's season row is already on — so he is compared like for like. With
+    no schedule loaded, `weeks_remaining` stands in: fewer games, a lower
+    number, never a higher one.
+
+    Only ever raises. Missing, OUT and bye weeks fall through to ESPN's row.
+    """
+    base = player.proj_season
+    comps: dict[str, float] = {}
+    rate = role_rate(player, current_week)
+    if rate is None or rate * weeks_remaining <= base:
+        return base, comps
+    games = (sum(1 for w in player.games if w >= current_week)
+             if player.games else weeks_remaining)
+    rebuilt = max(base, rate * games)
+    comps["espn_season_projection"] = round(base, 3)
+    comps["role.weekly_rate"] = round(rate, 3)
+    comps["role.games_left"] = float(games)
+    return rebuilt, comps
+
+
 def value_one(
     player: Player,
     settings: LeagueSettings,
@@ -82,7 +146,12 @@ def value_one(
                 base = 0.0
                 missing.append(f"no ESPN projection for week {week}")
     else:
-        base = player.proj_season
+        # In-season, a season row that lags a role change is rebuilt from
+        # the weekly projections (see ros_base). Preseason there are not two
+        # weeks to read, so this is ESPN's row unchanged.
+        base, role = ros_base(player, current_week=current_week,
+                              weeks_remaining=weeks_remaining)
+        components.update(role)
         if not base:
             missing.append("no ESPN season projection")
     components["base_projection"] = round(base, 3)
