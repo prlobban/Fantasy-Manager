@@ -19,6 +19,7 @@ from dataclasses import dataclass, field
 from core.model.priors import priors
 from core.model.schema import (
     STREAMED_POSITIONS,
+    InjuryStatus,
     LeagueSettings,
     Player,
     Pos,
@@ -76,6 +77,17 @@ def _startable(p: Player, v: Valuation) -> bool:
     return not v.vetoed and not p.injury_status.cannot_start
 
 
+def _designated(p: Player) -> bool:
+    """Does he carry an injury designation for THIS week (§4.3)?
+
+    ACTIVE is healthy, and so is UNKNOWN: ESPN sends no tag at all for most of
+    the pool, which `espn/players.py` reads as healthy unless the `injured`
+    flag is set. Only a real designation counts.
+    """
+    return (p.injury_status is InjuryStatus.QUESTIONABLE
+            or p.injury_status.cannot_start)
+
+
 def _flex_preferred(settings: LeagueSettings) -> tuple[Pos, ...]:
     """§4.6 — the positions a flex is filled from before any other."""
     raw = priors().get("lineup.flex_prefers") or []
@@ -121,6 +133,18 @@ def optimal_lineup(
     streamed defence past Sunday — its ROS number describes a player we will
     have dropped. At these positions the weekly window is the only window
     (§2.1), so the arithmetic stands unmodified.
+
+    🔴 **§4.7 does not seat a DESIGNATED player over a healthy one.** Found by
+    the agent on 2026-10-08, which again refused core's own plan: it had a
+    QUESTIONABLE D'Andre Swift (10.40 weekly, no Wednesday practice, 35% of
+    week-4 snaps) at RB over a healthy Emanuel Wilson (12.68), because Wilson's
+    ROS VOR read -109.2 — the preseason projection of a third-string back,
+    which nothing in the in-season path refreshes — against Swift's +4.8. §4.7
+    and D3.6 both say what they protect: a **healthy** stud. A designated
+    player's weekly number has already been cut for the tag (§4.3), while his
+    ROS number spreads availability across the whole season and says nothing
+    about whether he plays Sunday, so it must not be the number that overrides
+    the cut.
 
     Greedy by scarcity: fill the most constrained slots (single-position) before
     flex. With this many slots and players an exact assignment would also be
@@ -184,6 +208,17 @@ def optimal_lineup(
                 continue
             r = ros_valuations.get(pid)
             if r is None or best_ros is None:
+                continue
+            # 🔴 §4.7 protects a HEALTHY stud, so it cannot seat a DESIGNATED
+            # player over a healthy one. His weekly number has already been cut
+            # for the tag (§4.3, durability's 0.85); the ROS number smears
+            # availability across the whole season and says nothing about
+            # whether he plays Sunday, so it must not override that cut.
+            # Found 2026-10-08: a QUESTIONABLE D'Andre Swift (10.40 weekly) was
+            # taking the RB slot from a healthy Emanuel Wilson (12.68) on a
+            # 114-point ROS gap that was itself an artifact of Wilson's stale
+            # preseason projection.
+            if _designated(by_id[pid]) and not _designated(by_id[best_id]):
                 continue
             if (r.vor - best_ros.vor >= stud_ros_gap
                     and best_pts - valuations[pid].points < stud_margin):

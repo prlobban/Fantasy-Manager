@@ -285,3 +285,71 @@ def test_the_stud_rule_still_applies_at_a_kept_position():
     plan = lineup.build(roster, wk, s, week=9, ros_valuations=ros)
 
     assert next(a for a in plan.assignments if a.slot == "QB").player.name == "Allen"
+
+
+def swift_wilson_roster():
+    """The week-5 2026 RB room: a healthy ascending back the ROS number cannot
+    see, and a QUESTIONABLE one it still prices as a stud.
+
+    Wilson's 21.0 season projection is the preseason number for a third-string
+    back — nothing in the in-season path refreshes it — so his ROS VOR comes
+    out ~130 below Swift's off a stale input. Swift's weekly 12.0 takes the
+    §4.3 QUESTIONABLE discount (0.85) down to 10.2, which leaves the weekly gap
+    at 2.5 — inside `stud_bench_margin` 8.0, where §4.7 bites.
+    """
+    s = settings_10()
+    wilson = pl(30, Pos.RB, 12.68, weeks=4, name="Emanuel Wilson")
+    swift = pl(31, Pos.RB, 12.0, weeks=4, name="D'Andre Swift",
+               injury_status=InjuryStatus.QUESTIONABLE)
+    roster = [
+        pl(1, Pos.QB, 20, weeks=4), pl(3, Pos.RB, 18, weeks=4),
+        pl(6, Pos.WR, 17, weeks=4), pl(7, Pos.WR, 14, weeks=4),
+        pl(8, Pos.WR, 13, weeks=4), pl(9, Pos.TE, 11, weeks=4),
+        wilson, swift,
+    ]
+    wk = value_pool(roster, s, window="week", week=5)
+    wilson.proj_season, swift.proj_season = 21.0, 185.0
+    ros = value_pool(roster, s, window="ros", weeks_remaining=10, current_week=5)
+    return s, roster, wk, ros
+
+
+def test_the_stud_rule_does_not_seat_a_questionable_player_over_a_healthy_one():
+    """🔴 2026-10-08: core wanted D'Andre Swift (10.40 weekly, QUESTIONABLE on
+    hip and knee, no Wednesday practice, 35% of snaps in week 4) at RB over a
+    healthy Emanuel Wilson (12.68), because Wilson's ROS VOR read -109.2 — he
+    had no preseason projection as a third-stringer — against Swift's +4.8. The
+    114-point ROS gap cleared `stud_ros_gap` and the 2.28-point weekly gap sat
+    inside `stud_bench_margin`, so §4.7 suppressed the upgrade. The agent
+    overrode it by hand and escalated that core would propose it again the next
+    morning.
+
+    §4.7 and D3.6 protect a HEALTHY stud. The weekly projection has already
+    been cut for the designation (§4.3, durability's 0.85), while the ROS number
+    smears availability across the whole season and says nothing about whether
+    he plays Sunday — so it must not be the number that overrides the cut.
+    """
+    s, roster, wk, ros = swift_wilson_roster()
+
+    plan = lineup.build(roster, wk, s, week=5, ros_valuations=ros)
+
+    starters = {a.player.name for a in plan.assignments if a.player}
+    assert "Emanuel Wilson" in starters, (
+        "§4.7 seated a QUESTIONABLE back over a healthy one with a higher "
+        "weekly projection"
+    )
+    assert "D'Andre Swift" not in starters
+
+
+def test_the_stud_rule_still_fires_when_both_backs_carry_the_same_tag():
+    """The carve-out is about the designation, not about the ROS gap: between
+    two QUESTIONABLE players the status discount hits both weekly numbers, so
+    the rest-of-season number is still the one with signal (§4.7)."""
+    s, roster, wk, ros = swift_wilson_roster()
+    wilson = next(p for p in roster if p.name == "Emanuel Wilson")
+    wilson.injury_status = InjuryStatus.QUESTIONABLE
+    wk = value_pool(roster, s, window="week", week=5)
+
+    plan = lineup.build(roster, wk, s, week=5, ros_valuations=ros)
+
+    starters = {a.player.name for a in plan.assignments if a.player}
+    assert "D'Andre Swift" in starters
