@@ -208,6 +208,7 @@ def get_waiver_plan() -> str:
     v = _vals(s, week=s.decision_week)
     ros = _vals(s, window="ros")
     from core.gates import rate_limits
+    from core.manager import trades_out as T
     from core.manager import waivers as w
 
     plan = w.build(
@@ -219,6 +220,9 @@ def get_waiver_plan() -> str:
         adds_left=rate_limits.adds_left(),
         ros_valuations=ros,
         current_slots=s.me.slots,
+        # §6.1a — never hand back a drop we have already promised to another
+        # manager (2026-10-09, the Addison/team 6 block).
+        promised=T.promised_ids(),
     )
 
     from core.manager import research as R
@@ -870,6 +874,31 @@ def add_drop(add_id: int, drop_id: int | None, reason: str, cites: list[str]) ->
                        "and Continue never enables. Drop someone whose game is "
                        f"still to come, or claim {add_p.name} once the slate "
                        "has rolled over.",
+            )
+
+        # §6.1a — a player we have promised away in an open outgoing offer is
+        # not ours to drop. ESPN voids a proposal whose proposer no longer owns
+        # a piece of it, and §6.1a closes an offer only by seeing every player
+        # we asked to GET land on our roster — which then can never happen — so
+        # §6.1 blocks that manager for the rest of the fortnight for nothing.
+        #
+        # 2026-10-09: Jordan Addison was half of the open 10-05 Kelce+Addison
+        # offer to team 6 and the cheapest body on the bench, so he went out as
+        # the drop behind an add. §6.1 then refused every proposal to team 6
+        # until 10-19 — including a +103.7 ROS deal for Kenneth Walker III at a
+        # 0.84 market ratio that that manager had asked for in chat.
+        from core.manager import trades_out as T
+
+        if (owed := T.promised_ids().get(drop_p.espn_id)) is not None:
+            return _ok(
+                allowed=False, refused_by="§6.1",
+                reason=f"{drop_p.name} is part of an offer still open with team "
+                       f"{owed}, so he is not ours to drop: dropping him voids "
+                       "that offer at ESPN, and §6.1a can then never settle it "
+                       "— which blocks every proposal to that manager for the "
+                       "rest of the fortnight. Drop someone else, or wait the "
+                       "offer out (Pearce withdraws it in the app if it has to "
+                       "go — §8.2 gives core no withdraw).",
             )
 
     # §5.10 / D6.4 — never stream into a slot that is already settled.

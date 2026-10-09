@@ -243,6 +243,7 @@ def choose_drop(
     bench_open: int = 0,
     ros_valuations: dict[int, Valuation] | None = None,
     locked_slots: dict[int, str] | None = None,
+    promised: dict[int, int] | None = None,
 ) -> tuple[Player | None, float, str, bool]:
     """§5.5 / D5.2 / D4.5 — who we can afford to cut, what it costs, and
     whether he is worth trading first.
@@ -251,6 +252,9 @@ def choose_drop(
     contributes to the ONE optimal lineup — zero for a bench body. Order of
     preference is the doctrine's: surplus at a one-slot position first, then
     surplus anywhere, then lowest ROS value.
+
+    `promised` is `trades_out.promised_ids()` — espn_id -> the team we have
+    offered him to in an offer that is still open (§6.1a).
     """
     p = priors()
     keep_weeks = int(p.get("waivers.keep_injured_return_within_weeks"))
@@ -263,6 +267,8 @@ def choose_drop(
     droppable: list[tuple[int, float, Player]] = []
     held: list[str] = []
     locked: list[str] = []
+    offered: list[str] = []
+    promised = promised or {}
     order = roster_mod.drop_order(roster, ros, settings)
     for i, pl in enumerate(order):
         v = valuations.get(pl.espn_id)
@@ -285,6 +291,22 @@ def choose_drop(
             locked.append(pl.name)
             continue
 
+        # §6.1a — a player we have already promised away in an open outgoing
+        # offer is not ours to cut. ESPN voids a proposal whose proposer no
+        # longer owns a piece of it, and §6.1a closes an offer only by seeing
+        # every player we asked to GET arrive on our roster — which then can
+        # never happen — so §6.1 keeps that manager blocked for the whole
+        # fortnight with nothing to show for it.
+        #
+        # 2026-10-09: Jordan Addison was half of the open 10-05 Kelce+Addison
+        # offer to team 6 and the cheapest body on the bench, so core named him
+        # as the drop behind an add. The offer died, and §6.1 then refused
+        # every proposal to team 6 until 10-19 — including a +103.7 ROS deal
+        # for Kenneth Walker III that that manager had asked for in chat.
+        if pl.espn_id in promised:
+            offered.append(f"{pl.name} (offered to team {promised[pl.espn_id]})")
+            continue
+
         # §5.5 — hold an injured player who is coming back soon, but ONLY while
         # a bench spot exists.
         if pl.injury_status.cannot_start and bench_open > 0:
@@ -305,6 +327,9 @@ def choose_drop(
                       "slate to roll over")
         if held:
             reason += f"; holding {', '.join(held)}"
+        if offered:
+            reason += (f"; {', '.join(offered)} — an open offer is a commitment "
+                       "until it settles (§6.1a)")
         return None, 0.0, reason, False
 
     # Cheapest to the lineup first; among bench bodies, the doctrine's order.
@@ -325,6 +350,9 @@ def choose_drop(
                    "has already played — ESPN locks the row (§4.8)")
     if held:
         reason += f"; holding {', '.join(held)} per §5.5"
+    if offered:
+        reason += (f"; not {', '.join(offered)} — an open offer is a commitment "
+                   "until it settles (§6.1a)")
     return pl, cost, reason, tradeable
 
 
@@ -382,6 +410,7 @@ def build(
     adds_left: int | None = None,
     ros_valuations: dict[int, Valuation] | None = None,
     current_slots: dict[int, str] | None = None,
+    promised: dict[int, int] | None = None,
 ) -> WaiverPlan:
     """The whole §5 read: every candidate scored, every rule stated.
 
@@ -393,6 +422,9 @@ def build(
     is everyone worth a look with the objections attached (D9): the agent
     may add any of them; the gate only refuses the cap, the room and a
     protected drop.
+
+    `promised` (§6.1a) keeps a player we have already offered to another
+    manager out of the drop column — see `choose_drop`.
     """
     p = priors()
     on_waivers = on_waivers or set()
@@ -425,7 +457,7 @@ def build(
     drop, drop_cost, drop_reason, tradeable = choose_drop(
         roster, valuations, settings, current_week=current_week,
         bench_open=bench_open, ros_valuations=ros_valuations,
-        locked_slots=locked_slots,
+        locked_slots=locked_slots, promised=promised,
     )
 
     cands: list[Candidate] = []

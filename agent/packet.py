@@ -405,6 +405,7 @@ def build(task: str, state: ls_mod.LeagueState | None = None,
         }
 
     if task in ("daily", "tuesday") and scope in ("all", "waivers"):
+        from core.manager import trades_out as T
         from core.manager import waivers as w
 
         # §5.9 — the add pays from `decision_week`, not from a slate that has
@@ -429,6 +430,12 @@ def build(task: str, state: ls_mod.LeagueState | None = None,
             # already locked. 2026-09-12: the agent was shown "+9.02/wk" for a
             # kicker whose target slot was frozen, and spent an add on it.
             current_slots=me.slots,
+            # §6.1a — and never price an add against a drop we have already
+            # promised to another manager. 2026-10-09: Jordan Addison was the
+            # drop behind every candidate on the menu while he was half of the
+            # open 10-05 offer to team 6; dropping him killed the offer and
+            # §6.1 blocked that manager until 10-19.
+            promised=T.promised_ids(),
         )
 
         def _cand(c):

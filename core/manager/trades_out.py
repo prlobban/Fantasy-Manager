@@ -32,6 +32,7 @@ from __future__ import annotations
 import itertools
 import logging
 from dataclasses import dataclass, field
+from datetime import UTC, datetime, timedelta
 
 from core.gates import rate_limits
 from core.manager import roster as roster_mod
@@ -39,8 +40,52 @@ from core.manager.gauntlet import _starting_points
 from core.model import market
 from core.model.priors import priors
 from core.model.schema import LeagueSettings, Player, Pos, Valuation
+from core.state import store
 
 log = logging.getLogger(__name__)
+
+#: §6.1's open-offer window. `rate_limits.can_propose` reads `trade_proposals`
+#: 14 days back, so a promise expires exactly when the block it created does.
+_OPEN_OFFER_DAYS = 14.0
+
+
+def promised_ids() -> dict[int, int]:
+    """§6.1a — our players already promised away in an OPEN outgoing offer,
+    mapped to the team we offered them to.
+
+    An offer closes on one signal: every player we asked to GET arriving on
+    our roster (§6.1a). A player we offered to GIVE who leaves our roster
+    first takes that possibility with him — ESPN voids a proposal whose
+    proposer no longer owns a piece of it, so the GET side can never land and
+    §6.1 keeps that manager blocked for the rest of the fortnight for nothing.
+
+    2026-10-09: Jordan Addison was half of the 10-05 Kelce+Addison offer to
+    team 6 and the cheapest body on our bench, so core handed him over as the
+    drop behind an add. §6.1 then refused every proposal to team 6 until
+    10-19, including a +103.7 ROS deal for Kenneth Walker III that that
+    manager had asked for in chat. Read by `waivers.choose_drop` (which stops
+    offering him) and by `add_drop` (which refuses the write).
+
+    Offers recorded before 2026-09-16 carry no player ids and promise nobody;
+    `rate_limits.unverifiable_proposals` surfaces those instead.
+    """
+    cutoff = datetime.now(UTC) - timedelta(days=_OPEN_OFFER_DAYS)
+    out: dict[int, int] = {}
+    for e in store.load().get("trade_proposals") or []:
+        team = e.get("to_team")
+        if team is None:
+            continue
+        try:
+            at = datetime.fromisoformat(e["at"])
+            if not at.tzinfo:
+                at = at.replace(tzinfo=UTC)
+        except Exception:
+            continue
+        if at < cutoff:
+            continue
+        for pid in e.get("give") or []:
+            out[int(pid)] = int(team)
+    return out
 
 
 @dataclass
