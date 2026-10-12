@@ -474,7 +474,9 @@ def build(task: str, state: ls_mod.LeagueState | None = None,
 
         others = {tid: (t.name, t.roster) for tid, t in st.teams.items()
                   if tid != st.my_team_id}
-        props = T.build(me.roster, others, ros_vals, st.facts.settings, week=st.week)
+        promised = T.promised_ids()
+        props = T.build(me.roster, others, ros_vals, st.facts.settings, week=st.week,
+                        promised=promised)
         mv = T.market_values(st.all_players(), ros_vals, week=st.week)
 
         def _side(players):
@@ -493,7 +495,12 @@ def build(task: str, state: ls_mod.LeagueState | None = None,
                      f"prices it at {priors().get('trades.shape_point_value')} ROS points a "
                      "unit, but the call is yours. You may propose an offer that is not on "
                      "this list — the same gate applies. Every proposal needs "
-                     "why_they_accept."),
+                     "why_they_accept. `promised_away` is off the board for "
+                     "everyone but the manager named: promising a body twice voids "
+                     "the first offer and mortgages that manager for the "
+                     "fortnight (§6.1a)."),
+            "promised_away": [{"name": x.name, "to_team": promised[x.espn_id]}
+                              for x in me.roster if x.espn_id in promised],
             "ideas": [{
                 "to_team": p.to_team, "to_team_name": p.to_team_name,
                 "give": _side(p.give), "get": _side(p.get),

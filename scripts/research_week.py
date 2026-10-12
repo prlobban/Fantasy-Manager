@@ -58,7 +58,8 @@ def targets(st: league_state.LeagueState) -> list[tuple[object, object, str]]:
 
     n_t = int(p.get("research_week.trade_targets"))
     others = {tid: (t.name, t.roster) for tid, t in st.teams.items() if tid != st.my_team_id}
-    for pr in trades_out.build(st.me.roster, others, ros, settings, max_proposals=n_t):
+    for pr in trades_out.build(st.me.roster, others, ros, settings, max_proposals=n_t,
+                               promised=trades_out.promised_ids()):
         for pl in pr.get:
             out.setdefault(pl.espn_id, (pl, vals.get(pl.espn_id), "trade"))
     return list(out.values())

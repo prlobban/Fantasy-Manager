@@ -66,6 +66,11 @@ def promised_ids() -> dict[int, int]:
     manager had asked for in chat. Read by `waivers.choose_drop` (which stops
     offering him) and by `add_drop` (which refuses the write).
 
+    2026-10-12: the same hole in the TRADE path. A body leaves our roster just
+    as finally when a second manager accepts an offer for him, so `build`
+    keeps him off every other manager's board and `value_check` refuses the
+    proposal.
+
     Offers recorded before 2026-09-16 carry no player ids and promise nobody;
     `rate_limits.unverifiable_proposals` surfaces those instead.
     """
@@ -195,15 +200,20 @@ def build(
     *,
     max_proposals: int = 5,
     week: int = 1,
+    promised: dict[int, int] | None = None,
 ) -> list[Proposal]:
     """Generate candidate proposals, best first. 1-for-1 and 2-for-1 only:
     bigger packages are harder to evaluate, harder to accept, and §6.5 says
     consolidation beats dilution anyway.
 
     Hard filters, all irreversible-loss rules: our lineup must improve
-    (§6.2), the market ratio must clear the floor (§6.3 as a number), and a
-    protected asset is never diluted (§6.5). Everything else — their model
-    gain, the shape effect — is a flag the agent reads.
+    (§6.2), the market ratio must clear the floor (§6.3 as a number), a
+    protected asset is never diluted (§6.5), and a body already promised to
+    another manager is not offered again (§6.1a). Everything else — their
+    model gain, the shape effect — is a flag the agent reads.
+
+    `promised` is `promised_ids()` — espn_id -> the team we have already
+    offered him to in an offer that is still open.
     """
     p = priors()
     protected_n = int(p.get("trades.protected_top_n"))
@@ -233,11 +243,31 @@ def build(
     givables = surplus + bench
     if not givables:
         return []
+    promised = promised or {}
 
     proposals: list[Proposal] = []
     for tid, (name, their_roster) in their_rosters.items():
         their_vals_ok = [pl for pl in their_roster if pl.espn_id in valuations]
         if not their_vals_ok:
+            continue
+
+        # §6.1a — a body we have already promised to a DIFFERENT manager is
+        # not ours to put on this manager's board. If this offer is accepted
+        # he leaves our roster, ESPN voids the offer whose proposer no longer
+        # owns a piece of it, §6.1a can then never see its GET side arrive,
+        # and §6.1 blocks the first manager for the rest of the fortnight for
+        # nothing. He stays available to the manager he is promised to —
+        # that second offer is §6.1's one-open-offer rule's business, and it
+        # already reports it as a rate-limit warning below.
+        #
+        # 2026-10-12: Garrett Wilson was half of the open 10-08 Andrews +
+        # Garrett Wilson offer to team 9 and still appeared on the give side
+        # of the ideas to three other managers; the sweep spent its one
+        # escalation asking Pearce for a read on one of them.
+        spoken_for = {pid for pid, owed in promised.items() if owed != tid}
+        team_givables = [pl for pl in givables if pl.espn_id not in spoken_for]
+        team_starters = [pl for pl in starters if pl.espn_id not in spoken_for]
+        if not team_givables:
             continue
         # What we would take: their best by ROS VOR at any lineup position.
         # Whether he actually helps us is the delta below, not a position rule.
@@ -249,10 +279,10 @@ def build(
             continue
 
         combos: list[tuple[list[Player], list[Player]]] = []
-        for g in givables[:6]:
+        for g in team_givables[:6]:
             for r in gettables:
                 combos.append(([g], [r]))
-        for pair in itertools.combinations((givables + starters)[:7], 2):
+        for pair in itertools.combinations((team_givables + team_starters)[:7], 2):
             for r in gettables[:5]:
                 combos.append((list(pair), [r]))
 
@@ -353,13 +383,19 @@ def _starter_ids(roster, valuations, settings) -> set[int]:
 
 
 def value_check(our_roster, their_roster, give, get, valuations,
-                settings, *, week: int = 1) -> tuple[bool, str, float, float]:
+                settings, *, week: int = 1, to_team: int | None = None,
+                promised: dict[int, int] | None = None,
+                ) -> tuple[bool, str, float, float]:
     """The propose_trade gate, in code.
 
     Hard: our starting lineup must improve (§6.2); the market ratio must
     clear `trades.min_market_ratio` (§6.3, the group-chat test as a number);
-    a protected top-N asset is never sent out for lesser parts (§6.5).
+    a protected top-N asset is never sent out for lesser parts (§6.5); a body
+    already promised to another manager is not promised twice (§6.1a).
     Advisory: their model gain, reported in the message either way.
+
+    Every refusal reason starts with the section it enforces, which is what
+    `propose_trade` reports as `refused_by`.
     """
     p = priors()
     min_ratio = float(p.get("trades.min_market_ratio"))
@@ -367,6 +403,21 @@ def value_check(our_roster, their_roster, give, get, valuations,
 
     ours = _delta(our_roster, give, get, valuations, settings)
     theirs = _delta(their_roster, get, give, valuations, settings)
+
+    # §6.1a, 2026-10-12 — checked before the value rules, because a positive
+    # §6.2 gain is exactly what makes this one tempting. An accepted second
+    # offer takes him off our roster, ESPN voids the first offer, §6.1a can
+    # never settle it, and §6.1 blocks that manager for the fortnight.
+    for x in give:
+        owed = (promised or {}).get(x.espn_id)
+        if owed is not None and owed != to_team:
+            return (False, f"§6.1a {x.name} is already part of an offer still open "
+                    f"with team {owed}, so he cannot be promised twice: if this one "
+                    "is accepted ESPN voids that offer and §6.1 blocks that manager "
+                    "for the rest of the fortnight. Offer someone else, or wait the "
+                    "offer out (§8.2 gives core no withdraw — Pearce pulls it in the "
+                    "app if it has to go).", ours, theirs)
+
     if ours <= 0:
         return False, f"§6.2 our starting lineup does not improve ({ours:+.1f})", ours, theirs
 

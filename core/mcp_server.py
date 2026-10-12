@@ -484,7 +484,9 @@ def get_trade_ideas() -> str:
 
     v = _vals(s, window="ros")
     others = {tid: (t.name, t.roster) for tid, t in s.teams.items() if tid != s.my_team_id}
-    props = T.build(s.me.roster, others, v, s.facts.settings, week=s.week)
+    promised = T.promised_ids()
+    props = T.build(s.me.roster, others, v, s.facts.settings, week=s.week,
+                    promised=promised)
     mv = T.market_values(s.all_players(), v, week=s.week)
     day_left, week_left = rate_limits.proposals_left()
 
@@ -500,7 +502,12 @@ def get_trade_ideas() -> str:
         note=("our_gain is hard (§6.2); market_ratio under the floor is refused (§6.3); "
               "their_gain_advisory is our model's guess. shape_score is + for fixing our "
               "shape and − for breaking it, a shortage counting double a surplus (D2.4). "
-              "Any offer, listed or not, goes through the same gate. Say why they accept (D9)."),
+              "Any offer, listed or not, goes through the same gate. Say why they accept (D9). "
+              "`promised_away` is off the board for everyone but the manager named: "
+              "promising a body twice voids the first offer and mortgages that "
+              "manager for the fortnight (§6.1a)."),
+        promised_away=[{"name": pl.name, "to_team": promised[pl.espn_id]}
+                       for pl in s.me.roster if pl.espn_id in promised],
         proposals=[{
             "to_team": p.to_team, "to_team_name": p.to_team_name,
             "give": _side(p.give), "get": _side(p.get),
@@ -969,7 +976,8 @@ def propose_trade(to_team: int, give_ids: list[int], get_ids: list[int],
     """Send an outgoing trade offer. AUTO inside §6.1–§6.7: rate-limited
     (1/day, 3/week, 1 open per manager, no re-propose inside 14 days). Re-run
     HERE in code: our lineup must improve (§6.2), the market ratio must clear
-    `trades.min_market_ratio` (§6.3), no protected asset for a package (§6.5).
+    `trades.min_market_ratio` (§6.3), no protected asset for a package (§6.5),
+    and nobody already promised away in an open offer (§6.1a).
     Our model's read of THEIR gain is advisory (D9).
 
     `why_they_accept` is required: the reason this specific human says yes —
@@ -1002,9 +1010,13 @@ def propose_trade(to_team: int, give_ids: list[int], get_ids: list[int],
 
     v = _vals(s, window="ros")
     ok, why, ours, theirs_gain = T.value_check(
-        s.me.roster, them.roster, give, get, v, s.facts.settings, week=s.week)
+        s.me.roster, them.roster, give, get, v, s.facts.settings, week=s.week,
+        to_team=to_team, promised=T.promised_ids())
     if not ok:
-        return _ok(allowed=False, refused_by="§6.2/§6.3/§6.5", reason=why)
+        # Every value_check reason opens with the section it enforces (§6.2,
+        # §6.3, §6.5, §6.1a), so the refusal names itself rather than listing
+        # every rule it might have been.
+        return _ok(allowed=False, refused_by=why.split()[0], reason=why)
 
     action = Action(
         kind=ActionKind.PROPOSE_TRADE,
