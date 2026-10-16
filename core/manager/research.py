@@ -31,6 +31,10 @@ log = logging.getLogger(__name__)
 
 _UNSTARTABLE = {"out", "ir", "suspended"}
 
+#: The season turns over on September 1, so a date on or after the most recent
+#: one is inside the season being played. Same convention as core/proj/features.
+_SEASON_START = (9, 1)
+
 
 @dataclass
 class WeekDossier:
@@ -81,6 +85,18 @@ def _clamp(x: float, cap: float) -> float:
     return max(1.0 - cap, min(1.0 + cap, x))
 
 
+def _season_start(now: datetime | None = None) -> datetime:
+    """Kickoff of the season now being played, as a UTC instant."""
+    n = now or datetime.now(UTC)
+    year = n.year if (n.month, n.day) >= _SEASON_START else n.year - 1
+    return datetime(year, *_SEASON_START, tzinfo=UTC)
+
+
+def _dated_in_season(item: dict, start: datetime) -> bool:
+    when = _parse_dt(item.get("date"))
+    return when is not None and when >= start
+
+
 def validate(raw: dict, *, now: datetime | None = None,
              max_age_hours: float | None = None) -> tuple[WeekDossier | None, list[str]]:
     problems: list[str] = []
@@ -121,6 +137,30 @@ def validate(raw: dict, *, now: datetime | None = None,
     age = d.age_hours(now)
     if age is not None and age > cap:
         return None, problems + [f"stale: {age:.0f}h old, cap {cap:.0f}h"]
+
+    # §2.8 — the dates IN the record, not just the date ON it. The pass rewrites
+    # every dossier each morning, so `researched_at` is fresh even when every
+    # word in the file is from last October, and a prior-season injury report
+    # reads as current. Found 2026-10-16: two sweeps running, core benched
+    # Garrett Wilson, spent a weekly add and tried to IR him, and sat Chuba
+    # Hubbard on the panthers.com "four ruled out" story dated 2025-10-10. A
+    # claim that cannot carry a dated, in-season source is not a finding, so
+    # those items are dropped before any rule below reads them — and a record
+    # whose every dated item is prior-season is not this week's record at all.
+    start = _season_start(now)
+    if d.news_since:
+        current = [n for n in d.news_since if _dated_in_season(n, start)]
+        dropped = [str(n.get("date") or "undated")
+                   for n in d.news_since if not _dated_in_season(n, start)]
+        if dropped and not current:
+            return None, problems + [
+                f"prior-season record: no news item is dated inside the season that "
+                f"began {start.date()} ({', '.join(dropped[:3])})"]
+        if dropped:
+            d.demotions.append(
+                f"{len(dropped)} news item(s) dropped: not dated inside the season that "
+                f"began {start.date()} ({', '.join(dropped[:3])})")
+            d.news_since = current
 
     n_hosts = len(d.hosts)
     designation = str(d.status.get("designation") or "").lower()

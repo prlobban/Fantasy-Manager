@@ -8,6 +8,7 @@ three-TE roster, the research bridge's clamps, and the D8 reasoning contract.
 from __future__ import annotations
 
 import json
+from datetime import UTC, datetime
 
 import pytest
 
@@ -440,6 +441,74 @@ def test_a_stale_dossier_is_ignored():
 def test_unsourced_research_is_thrown_away():
     d, problems = R.validate(_raw(sources=["ESPN"]))
     assert d is None
+
+
+# ── §2.8 the dates IN the record ─────────────────────────────────────────────
+#
+# 🔴 2026-10-16. Two sweeps in a row made live roster writes on prior-season
+# injury reports: 10-15 benched Garrett Wilson, spent a weekly add cutting
+# Hockenson for Burden and tried to park Wilson on IR, and both days sat Chuba
+# Hubbard on the panthers.com "Week 6 Friday Injury Report: Four ruled out"
+# story dated 2025-10-10. Every dossier is rewritten each morning, so
+# `researched_at` was fresh and the shelf-life rule saw nothing wrong.
+
+_NOW = datetime(2026, 10, 16, 12, 39, tzinfo=UTC)
+
+
+def _hubbard(**over):
+    """The 10-15 dossier, written this morning on last October's injury report."""
+    base = {
+        "researched_at": _NOW.isoformat(),
+        "status": {"designation": "out", "practice": "dnp",
+                   "detail": "ruled out on the Friday injury report"},
+        "usage": {"trend": "unknown", "detail": ""},
+        "week_multiplier": 0.75, "veto": True, "veto_reason": "ruled out",
+        "news_since": [{"date": "2025-10-10",
+                        "headline": "Week 6 Friday Injury Report: Four ruled out, "
+                                    "including Chuba Hubbard and Taylor Moton",
+                        "url": "https://www.panthers.com/news/injury-report"}],
+    }
+    base.update(over)
+    return _raw(**base)
+
+
+def test_a_record_whose_every_dated_item_is_prior_season_is_not_this_weeks_record():
+    d, problems = R.validate(_hubbard(), now=_NOW)
+    assert d is None
+    assert any("prior-season" in p and "2025-10-10" in p for p in problems)
+
+
+def test_a_prior_season_item_is_dropped_from_an_otherwise_current_dossier():
+    """The mixed case: one 2025 story beside a real one from this week. The
+    dossier survives, the stale item does not, and the agent sees the drop."""
+    d, problems = R.validate(_hubbard(news_since=[
+        {"date": "2025-10-10", "headline": "Four ruled out",
+         "url": "https://www.panthers.com/news/injury-report"},
+        {"date": "2026-10-15", "headline": "Wednesday practice report",
+         "url": "https://www.panthers.com/news/practice"},
+    ]), now=_NOW)
+    assert d is not None
+    assert [n["date"] for n in d.news_since] == ["2026-10-15"]
+    assert any("2025-10-10" in p for p in problems)
+    assert d.veto is True          # dated inside the season, two hosts: it stands
+
+
+def test_an_undated_news_item_is_not_a_dated_source():
+    """§2.8: a claim that cannot carry a dated, in-season source is not a
+    finding. The schema requires a date; a record that omits one is not
+    evidence either."""
+    d, problems = R.validate(_hubbard(news_since=[
+        {"headline": "Hubbard dealing with a knee", "url": "https://www.panthers.com/news/x"},
+    ]), now=_NOW)
+    assert d is None
+
+
+def test_a_dossier_with_no_news_at_all_is_still_a_dossier():
+    """An empty `news_since` is a perfectly good record — nothing happened this
+    week. Only a record whose dated evidence is all from another season is
+    thrown out."""
+    d, _ = R.validate(_raw(news_since=[], week_multiplier=1.0), now=_NOW)
+    assert d is not None
 
 
 # ── the D8 reasoning contract ────────────────────────────────────────────────

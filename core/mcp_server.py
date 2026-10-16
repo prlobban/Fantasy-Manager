@@ -342,7 +342,10 @@ def research_player(espn_id: int, question: str = "") -> str:
     R.write(espn_id, out, week=s.week)
     d = R.load_one(espn_id, max_age_hours=max_age)
     if d is None:
-        return _ok(error="dossier written but rejected by validation (no verifiable source)",
+        # 2026-10-16: the second reason is new, and it is the common one on an
+        # injury story — the researcher found only last season's report.
+        return _ok(error="dossier written but rejected by validation (no verifiable source, "
+                         "or nothing in it dated inside this season — see the log)",
                    used=_ON_DEMAND["used"], cap=cap)
     log.info("on-demand research: %s (%s) $%.2f", pl.name, role, cost)
     return _ok(fresh=False, used=_ON_DEMAND["used"], cap=cap, cost_usd=round(cost, 2),
