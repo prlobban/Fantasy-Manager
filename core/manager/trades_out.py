@@ -176,14 +176,23 @@ def market_values(pool: list[Player], valuations: dict[int, Valuation], *,
                   week: int) -> dict[int, float]:
     """espn_id -> market trade value (D9), for everyone in the pool.
 
-    The ROS rank used for the decay is the pool-wide VOR rank, which is the
-    same cross-position shape ADP has.
+    The ROS rank used for the decay is the VOR rank over `valuations` — every
+    player core valued this run — which is the same cross-position shape ADP
+    has. `pool` says who to price, not what to price him against.
+
+    2026-10-17: it used to rank within `pool`, so the same player was worth
+    two different numbers depending on who asked. `build` prices against ten
+    rosters and `value_check` priced against two, which put Swift + Hubbard
+    for James Cook III on the board at a market ratio of 1.03 and through the
+    gate at 1.24 — core disagreeing with itself about the one number §6.3 is
+    enforced on and the agent quotes to another manager. Every caller passes
+    the same league-wide valuations (`value_pool` over `all_players()`), so
+    ranking over those makes the price the same wherever it is computed.
     """
     p = priors()
     decay_weeks = float(p.get("trades.market_adp_decay_weeks"))
-    ranked = sorted((pl for pl in pool if pl.espn_id in valuations),
-                    key=lambda pl: -valuations[pl.espn_id].vor)
-    ros_rank = {pl.espn_id: i for i, pl in enumerate(ranked, 1)}
+    ranked = sorted(valuations.items(), key=lambda kv: (-kv[1].vor, kv[0]))
+    ros_rank = {pid: i for i, (pid, _) in enumerate(ranked, 1)}
     out: dict[int, float] = {}
     for pl in pool:
         mr = market.market_rank(pl, ros_rank.get(pl.espn_id), week=week,
