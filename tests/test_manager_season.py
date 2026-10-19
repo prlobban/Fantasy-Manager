@@ -575,6 +575,26 @@ def test_the_schemas_agree_with_the_validator():
     assert "propose_trade" in s["properties"]["actions"]["items"]["properties"]["tool"]["enum"]
 
 
+def test_no_schema_uses_a_union_type_the_cli_rejects():
+    """2026-10-13: the Tuesday review died on `"type": ["number", "string"]`.
+    `--json-schema` compiles under Ajv strictTypes, which allows a type array
+    only as `[X, "null"]`. A real union has to be written as anyOf."""
+    def unions(node, path):
+        if isinstance(node, dict):
+            t = node.get("type")
+            if isinstance(t, list) and len([x for x in t if x != "null"]) > 1:
+                yield path
+            for k, v in node.items():
+                yield from unions(v, f"{path}/{k}")
+        elif isinstance(node, list):
+            for i, v in enumerate(node):
+                yield from unions(v, f"{path}/{i}")
+
+    bad = [f"{p.name}#{u}" for p in sorted(agent_run.SCHEMAS.glob("*.json"))
+           for u in unions(json.loads(p.read_text(encoding="utf-8")), "")]
+    assert not bad, bad
+
+
 def test_the_doctrine_is_inlined_for_deciding_tasks():
     prompt = agent_run.build_system_prompt("daily")
     assert "THE DOCTRINE" in prompt and "D4.5" in prompt

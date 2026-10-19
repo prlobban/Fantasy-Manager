@@ -43,8 +43,8 @@
         "required": ["key", "from", "to", "evidence"],
         "properties": {
           "key": {"type": "string", "description": "Dotted priors.yaml key."},
-          "from": {"type": ["number", "string"]},
-          "to": {"type": ["number", "string"]},
+          "from": {"anyOf": [{"type": "number"}, {"type": "string"}]},
+          "to": {"anyOf": [{"type": "number"}, {"type": "string"}]},
           "evidence": {"type": "string", "description": "The repeated, directional pattern."}
         }
       }
