@@ -595,6 +595,40 @@ def test_no_schema_uses_a_union_type_the_cli_rejects():
     assert not bad, bad
 
 
+def _review(prior_proposals):
+    return {"result": "Won 132.1-94.6.", "efficiency_read": "Optimal lineup.",
+            "calibration": [], "decision_grades": [], "lessons": [],
+            "prior_proposals": prior_proposals}
+
+
+@pytest.mark.parametrize("frm,to", [
+    ("ADP", "ESPN"),                    # string → string (model.market_rank_type)
+    (0.25, 0.3),                        # number → number
+    (None, "aggressive"),               # an unset key gets a value (waivers.faab_ladder is null)
+    ("aggressive", None),               # and back to unset
+    (None, 2),
+])
+def test_the_review_schema_takes_a_populated_prior_proposal(frm, to):
+    """The CLI's --json-schema is draft-07 Ajv; the review's output must pass
+    it with prior_proposals POPULATED, which no live run has done yet. A key
+    in priors.yaml can be null, so from/to must take null as well."""
+    jsonschema = pytest.importorskip("jsonschema")
+    schema = json.loads((agent_run.SCHEMAS / "review.json").read_text(encoding="utf-8"))
+    jsonschema.Draft7Validator.check_schema(schema)
+    out = _review([{"key": "model.x", "from": frm, "to": to,
+                    "evidence": "Three weeks running, same direction."}])
+    jsonschema.Draft7Validator(schema).validate(out)
+    assert agent_run._validate(out, "tuesday") == []
+
+
+@pytest.mark.parametrize("bad", [True, {"v": 1}])
+def test_the_review_schema_still_rejects_a_value_that_is_not_a_prior(bad):
+    jsonschema = pytest.importorskip("jsonschema")
+    schema = json.loads((agent_run.SCHEMAS / "review.json").read_text(encoding="utf-8"))
+    out = _review([{"key": "model.x", "from": bad, "to": 1, "evidence": "x"}])
+    assert list(jsonschema.Draft7Validator(schema).iter_errors(out))
+
+
 def test_the_doctrine_is_inlined_for_deciding_tasks():
     prompt = agent_run.build_system_prompt("daily")
     assert "THE DOCTRINE" in prompt and "D4.5" in prompt

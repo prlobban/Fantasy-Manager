@@ -22,7 +22,7 @@ from pathlib import Path
 
 #: A run that died of one of these needs a human or a clock, not a patch.
 NOT_CODE = re.compile(
-    r"session limit|usage limit|rate limit|overloaded|credit balance|"
+    r"session limit|usage limit|weekly limit|rate limit|overloaded|credit balance|"
     r"not logged in|failed to authenticate|oauth session expired|"
     r"invalid api key|claude auth login|espn_s2|log ?in required|NotLoggedIn",
     re.I,

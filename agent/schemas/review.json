@@ -43,8 +43,8 @@
         "required": ["key", "from", "to", "evidence"],
         "properties": {
           "key": {"type": "string", "description": "Dotted priors.yaml key."},
-          "from": {"anyOf": [{"type": "number"}, {"type": "string"}]},
-          "to": {"anyOf": [{"type": "number"}, {"type": "string"}]},
+          "from": {"anyOf": [{"type": "number"}, {"type": "string"}, {"type": "null"}], "description": "Current value; null when the key is unset (e.g. waivers.faab_ladder)."},
+          "to": {"anyOf": [{"type": "number"}, {"type": "string"}, {"type": "null"}]},
           "evidence": {"type": "string", "description": "The repeated, directional pattern."}
         }
       }

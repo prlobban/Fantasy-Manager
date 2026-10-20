@@ -377,11 +377,20 @@ def run(task: str, packet: dict, *, dry_run: bool = False,
     # tokens, and a budget built only from successes understates itself.
     usage = _usage(raw)
 
+    # A 429 is capacity whatever the sentence says. 2026-10-13 the Tuesday
+    # review and the sweep died on "You've hit your weekly limit", a phrasing
+    # no marker below matched, so it fell through to "claude exited 1" and
+    # read as a code fault: self-repair was sent after it, into the same limit.
+    if _api_status(raw) == 429:
+        return AgentResult(False, task, None, raw,
+                           error=f"capacity: rate limit (429): {_cli_message(raw) or 'no message'}",
+                           transcript=transcript, usage=usage)
+
     # The support agent learned this the hard way: claude can print a capacity
     # notice and still exit 0. Sniff the output, don't trust the exit code.
     lowered = raw.lower()
-    for marker in ("session limit", "usage limit", "rate limit", "credit balance",
-                   "overloaded"):
+    for marker in ("session limit", "usage limit", "weekly limit", "rate limit",
+                   "credit balance", "overloaded"):
         if marker in lowered:
             return AgentResult(False, task, None, raw,
                                error=f"capacity: {marker}", transcript=transcript,
@@ -403,9 +412,12 @@ def run(task: str, packet: dict, *, dry_run: bool = False,
                                transcript=transcript, usage=usage)
 
     if proc.returncode != 0:
-        # stderr is routinely empty under --output-format json; the CLI reports
-        # its own failure in the envelope's "result". Prefer whichever exists.
-        detail = (stderr or "").strip() or _cli_message(raw) or "(no stderr; see transcript)"
+        # The CLI reports its own failure in the envelope's "result", so that
+        # wins. stderr is not the cause: it carries the CLI's non-fatal
+        # warnings, and 2026-10-13 an Ajv strictTypes warning there was named
+        # as the cause of a run that actually died on a 429. stderr is the
+        # fallback for a run that never wrote an envelope at all.
+        detail = _cli_message(raw) or (stderr or "").strip() or "(no stderr; see transcript)"
         return AgentResult(False, task, None, raw,
                            error=f"claude exited {proc.returncode}: {detail[:300]}",
                            transcript=transcript, usage=usage)
@@ -469,6 +481,18 @@ def _cli_message(raw: str) -> str | None:
         return None
     msg = outer.get("result")
     return msg.strip() if isinstance(msg, str) and msg.strip() else None
+
+
+def _api_status(raw: str) -> int | None:
+    """The HTTP status the CLI's envelope says the API failed with, if any."""
+    try:
+        outer = json.loads(raw)
+    except (json.JSONDecodeError, TypeError, ValueError):
+        return None
+    if not isinstance(outer, dict) or not outer.get("is_error"):
+        return None
+    status = outer.get("api_error_status")
+    return status if isinstance(status, int) else None
 
 
 def _child_env() -> dict[str, str]:
