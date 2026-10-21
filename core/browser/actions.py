@@ -124,6 +124,40 @@ def _need(page, *candidates: str, what: str, group: str | None = None):
     return loc
 
 
+#: How long ESPN may take to make a committed-to button live after the click
+#: that should enable it. 2026-10-21 — see `_wait_enabled`.
+_CONFIRM_ENABLE_MS = 8_000
+
+
+def _wait_enabled(page, loc, *, timeout_ms: int) -> bool:
+    """Whether `loc`'s first element is enabled, waiting up to `timeout_ms`.
+
+    🔴 2026-10-21: both of the week-7 sweep's roster swaps — Titans D/ST for
+    the Ravens, Blake Corum for Emanuel Wilson — died on "Continue is still
+    disabled after selecting the drop". The exception screenshots show the DROP
+    had been clicked on the right row each time; ESPN simply had not enabled
+    Continue yet when the single check ran 800 ms later, so both writes failed
+    closed and the browser shut. The draft room learned this on 2026-09-04
+    (`_wait_for_draft_button`): an ESPN button is not live the moment it
+    renders. The add path never did.
+
+    Still fail-closed (§10.6): a button that never enables returns False and
+    the caller refuses the write.
+    """
+    import time
+
+    deadline = time.monotonic() + timeout_ms / 1000.0
+    while True:
+        try:
+            if not loc.first.is_disabled():
+                return True
+        except Exception:
+            pass
+        if time.monotonic() >= deadline:
+            return False
+        page.wait_for_timeout(250)
+
+
 # ── draft ────────────────────────────────────────────────────────────────────
 
 
@@ -583,7 +617,7 @@ def add_drop(s: EspnSession, league_id: int, season: int,
 
     confirm = _need(page, S.CONFIRM_BUTTON, what="the Continue/Confirm button",
                     group="CONFIRM_BUTTON")
-    if confirm.first.is_disabled():
+    if not _wait_enabled(page, confirm, timeout_ms=_CONFIRM_ENABLE_MS):
         raise ActionFailed(
             "Continue is still disabled after selecting the drop — ESPN has not "
             "accepted the transaction, so nothing was committed."
@@ -637,7 +671,7 @@ def drop_player(s: EspnSession, league_id: int, team_id: int, season: int,
 
     confirm = _need(page, S.CONFIRM_BUTTON, what="the drop Continue/Confirm button",
                     group="CONFIRM_BUTTON")
-    if confirm.first.is_disabled():
+    if not _wait_enabled(page, confirm, timeout_ms=_CONFIRM_ENABLE_MS):
         raise ActionFailed(
             f"Continue is still disabled after selecting {drop_name!r} — ESPN has "
             "not accepted the drop, so nothing was committed."
