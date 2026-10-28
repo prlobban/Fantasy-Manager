@@ -631,7 +631,16 @@ def add_drop(s: EspnSession, league_id: int, season: int,
         page.wait_for_timeout(1200)
 
     detail = f"add {add_name}" + (f", drop {drop_name}" if drop_name else "")
-    return _receipt(s, "add drop", detail, verified=False)
+    # 🔴 2026-10-28. This was the one roster-write path that read none of ESPN's
+    # own proof: it returned UNVERIFIED whatever had happened. The Brenton
+    # Strange swap committed — its receipt screenshot is the team page with
+    # "Move saved - C.J. Stroud dropped to Waivers, Brenton Strange added"
+    # across the bottom — and the sweep, reading UNVERIFIED, escalated the write
+    # as failed and queued a retry that would have spent a second of the week's
+    # adds re-doing it. The bench-had-room branch above and `drop_player` both
+    # prove themselves off this banner; so does this one now. Still fail-closed:
+    # no banner is still UNVERIFIED, which is what it always said.
+    return _receipt(s, "add drop", detail, verified=_move_saved(page, add_name))
 
 
 def drop_player(s: EspnSession, league_id: int, team_id: int, season: int,

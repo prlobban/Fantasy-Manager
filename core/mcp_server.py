@@ -968,6 +968,16 @@ def add_drop(add_id: int, drop_id: int | None, reason: str, cites: list[str]) ->
         # write failure and ask for a refund.
         rate_limits.record_add(add_id, drop_id,
                                pending=(kind == ActionKind.WAIVER_CLAIM))
+    # 🔴 §8.3 — the roster this run has cached was read BEFORE the write, so it
+    # is now a stale read of our own roster. 2026-10-28: the Brenton Strange
+    # swap committed, and the roster the agent looked at straight afterwards was
+    # the pre-write one — still C.J. Stroud, no Strange — so it reported a
+    # landed transaction as a failed write and handed off a retry of it.
+    # Dropping the cache makes the next read tool go back to ESPN; set_lineup
+    # re-reads after its own write for the same reason.
+    if gate.allowed:
+        global _state
+        _state = None
     return _ok(allowed=gate.allowed, refused_by=gate.refused_by,
                reason=gate.reason, error=err,
                receipt=str(receipt) if receipt else None)
