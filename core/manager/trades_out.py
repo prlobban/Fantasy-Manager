@@ -188,10 +188,22 @@ def market_values(pool: list[Player], valuations: dict[int, Valuation], *,
     enforced on and the agent quotes to another manager. Every caller passes
     the same league-wide valuations (`value_pool` over `all_players()`), so
     ranking over those makes the price the same wherever it is computed.
+
+    2026-11-05: a vetoed player ranks LAST, whatever his vor says. `value_pool`
+    keeps him out of the pool VOR is computed on, so his `vor` falls back to
+    the 0.0 default — exactly replacement level — and by week 9 only ~70 of
+    ~320 valued players are above replacement. That seated every unplayable
+    body in the top quarter of this rank: an IR'd back with no designated
+    return priced at 22.3 of market value while the healthy below-replacement
+    receiver we would actually package priced at 2.6, behind all 31 of them.
+    No human pays for a player who cannot take the field, and vor.py:70-79
+    already refuses this on a draft board — but that guard is in `compute_vor`,
+    which never sees a vetoed player.
     """
     p = priors()
     decay_weeks = float(p.get("trades.market_adp_decay_weeks"))
-    ranked = sorted(valuations.items(), key=lambda kv: (-kv[1].vor, kv[0]))
+    ranked = sorted(valuations.items(),
+                    key=lambda kv: (bool(kv[1].vetoed), -kv[1].vor, kv[0]))
     ros_rank = {pid: i for i, (pid, _) in enumerate(ranked, 1)}
     out: dict[int, float] = {}
     for pl in pool:
