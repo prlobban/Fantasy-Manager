@@ -37,7 +37,7 @@ case "$TASK" in
 esac
 RC=$?
 flock -u 9
-if [ "$RC" -ne 0 ] || tail -60 "$LOG" | grep -qiE 'session limit|usage limit|rate limit|overloaded|credit balance'; then
+if [ "$RC" -ne 0 ] || tail -c "+$((OFFSET + 1))" "$LOG" | grep -qE 'capacity: '; then
   echo "$(date -Is) ⚠️ $TASK FAILED (rc=$RC)" >> "$LOG"
   # Carry the reason, not a pointer. "see data/manager.log on the box" is what
   # an expired login looked like for two days: an alert that fires correctly
