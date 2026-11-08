@@ -68,6 +68,26 @@ def role_rate(player: Player, current_week: int) -> float | None:
     return min(player.proj_week[w] for w in weeks[:2])
 
 
+def projected_return(player: Player, current_week: int) -> int | None:
+    """The first week after `current_week` ESPN still projects him points, or
+    None when every future row is zero.
+
+    This is the evidence that an OUT designation is one week and not the
+    season: §2.5 vetoes a player "ruled OUT for the week in question", so over
+    the rest of the season his absence is the weeks he misses, not his whole
+    total (§2.3). ESPN zeroes the weekly rows of a player who is done for the
+    year, so no future row means no evidence of a return and the veto stands —
+    fail closed (§10.6).
+
+    Found 2026-11-08: Garrett Wilson, OUT for one week in concussion protocol
+    and projected 14 points in week 10, read ros_proj 0.0 / ros_vor 0.0.
+    (`waivers._weeks_until_return` reads the same rows for §5.5's hold.)
+    """
+    future = [w for w, pts in player.proj_week.items()
+              if w > current_week and pts > 0]
+    return min(future) if future else None
+
+
 def ros_base(
     player: Player, *, current_week: int, weeks_remaining: int,
 ) -> tuple[float, dict[str, float]]:
@@ -164,6 +184,11 @@ def value_one(
         age=ctx.age,
         weeks_remaining=weeks_remaining,
         current_week=current_week,
+        # Only over the rest of the season. For THIS week an OUT tag is the
+        # week in question, so it stays the §2.5 veto it is written as, and
+        # §4.3 keeps him out of the lineup.
+        out_return_week=(projected_return(player, current_week)
+                         if window == "ros" else None),
     )
     if ctx.news_veto:
         dur.vetoes.append(f"research: {ctx.news_veto}")

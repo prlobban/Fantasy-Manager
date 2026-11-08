@@ -120,12 +120,17 @@ def availability(
     current_week: int = 1,
     suspension_through_week: int | None = None,
     ir_return_week: int | None = None,
+    out_return_week: int | None = None,
 ) -> DurabilityResult:
     """Expected games played / 17, plus any hard vetoes.
 
     `history` should hold the last three seasons of injury events. An empty
     history is recorded in `missing` rather than treated as perfect health —
     rookies have no history and are not therefore durable.
+
+    `out_return_week` is the week an OUT player is expected back, when that is
+    known (`value.projected_return` reads it off ESPN's own weekly rows). It
+    turns the OUT veto into the discount §2.5 scopes it to — see below.
     """
     p = priors()
     vetoes: list[str] = []
@@ -139,7 +144,18 @@ def availability(
         veto_after = p.get("model.suspension_veto_after_week")
         if suspension_through_week is None or suspension_through_week > veto_after:
             vetoes.append(f"§2.5 suspended past week {veto_after}")
-    if status is InjuryStatus.OUT:
+    # §2.5's veto is "ruled OUT for the WEEK IN QUESTION", and that is a weekly
+    # designation. Over the rest of the season, an OUT tag ESPN still projects
+    # him back from costs the weeks he misses, not the whole total (§2.3) — so
+    # a known return week makes this a discount instead (further down). With no
+    # projected return there is no evidence he plays again and the veto stands.
+    #
+    # 2026-11-08: Garrett Wilson, OUT for one week in concussion protocol and
+    # projected back in week 10, read ros_proj 0.0 / ros_vor 0.0. Zero VOR is
+    # exactly replacement level, so §5.4 named an 88.5%-snap WR1 as the cut
+    # behind every waiver candidate while a healthy spare body sat on the same
+    # bench, and the sweep escalated rather than make the add.
+    if status is InjuryStatus.OUT and out_return_week is None:
         vetoes.append("§2.5 ruled OUT")
 
     if vetoes:
@@ -191,6 +207,16 @@ def availability(
         if weeks_remaining > 0:
             avail *= max(0.0, (weeks_remaining - out_weeks) / weeks_remaining)
             components["ir_weeks_missed"] = float(out_weeks)
+
+    # Same arithmetic for an OUT player ESPN projects back (2026-11-08): he is
+    # out this week at least, and plays the rest. The weeks he misses come off
+    # availability, which §2.3 then applies to the surplus — the slot is filled
+    # by a replacement in the meantime, it does not score zero.
+    if status is InjuryStatus.OUT and out_return_week is not None:
+        out_weeks = max(1, out_return_week - current_week)
+        if weeks_remaining > 0:
+            avail *= max(0.0, (weeks_remaining - out_weeks) / weeks_remaining)
+            components["out_weeks_missed"] = float(out_weeks)
 
     return DurabilityResult(
         availability=round(avail, 4),
