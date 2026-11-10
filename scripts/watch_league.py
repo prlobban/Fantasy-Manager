@@ -26,7 +26,6 @@ chatbot billing a sweep per message.
 from __future__ import annotations
 
 import argparse
-import fcntl
 import json
 import logging
 import os
@@ -120,16 +119,9 @@ def allowed(state: dict, now: datetime) -> tuple[bool, str]:
 
 def _sweep_running() -> bool:
     """The sweep holds data/run.lock for its whole run."""
-    p = settings().data_dir / "run.lock"
-    if not p.exists():
-        return False
-    with p.open("a") as f:
-        try:
-            fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            fcntl.flock(f, fcntl.LOCK_UN)
-            return False
-        except BlockingIOError:
-            return True
+    from core import runlock  # fcntl on POSIX, msvcrt on Windows
+
+    return runlock.is_held(settings().data_dir / "run.lock")
 
 
 def main() -> int:
@@ -185,9 +177,23 @@ def main() -> int:
     save_state(new_state)
     with open(settings().data_dir / "manager.log", "a", encoding="utf-8") as f:
         f.write(f"{now.isoformat()} watch: waking the sweep — {'; '.join(reasons)}\n")
-    subprocess.Popen([str(REPO_ROOT / "scripts" / "cron_manage.sh"), "sweep"],
-                     cwd=str(REPO_ROOT), start_new_session=True,
-                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    cmd = [str(REPO_ROOT / "scripts" / "cron_manage.sh"), "sweep"]
+    kw: dict = {"start_new_session": True}
+    if os.name == "nt":
+        # Windows cannot exec a .sh: run it under Git Bash, windowless, and out
+        # of the scheduler's job so the sweep outlives this tick.
+        cmd = [os.environ.get("FANTASY_BASH", "C:/Program Files/Git/bin/bash.exe"), *cmd]
+        flags = subprocess.CREATE_NO_WINDOW | subprocess.CREATE_NEW_PROCESS_GROUP
+        kw = {"creationflags": flags | subprocess.CREATE_BREAKAWAY_FROM_JOB}
+    try:
+        subprocess.Popen(cmd, cwd=str(REPO_ROOT), stdout=subprocess.DEVNULL,
+                         stderr=subprocess.DEVNULL, **kw)
+    except OSError:
+        if os.name != "nt":
+            raise
+        kw["creationflags"] = flags  # the job forbids breakaway
+        subprocess.Popen(cmd, cwd=str(REPO_ROOT), stdout=subprocess.DEVNULL,
+                         stderr=subprocess.DEVNULL, **kw)
     time.sleep(1)
     return 0
 

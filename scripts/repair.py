@@ -36,14 +36,12 @@ from __future__ import annotations
 
 import argparse
 import contextlib
-import fcntl
 import json
 import logging
 import os
 import shutil
 import subprocess
 import sys
-import time
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -78,7 +76,10 @@ MODEL = os.environ.get("REPAIR_MODEL", "") or CFG.claude_model
 TIMEOUT_S = 45 * 60
 
 _SANDBOX_KEEP = ("PATH", "HOME", "LANG", "LC_ALL", "TERM", "USER", "TZ",
-                 "CLAUDE_CODE_OAUTH_TOKEN")
+                 "CLAUDE_CODE_OAUTH_TOKEN",
+                 # Windows: without these, Python and the CLI cannot start.
+                 "SYSTEMROOT", "WINDIR", "COMSPEC", "PATHEXT", "TEMP", "TMP",
+                 "USERPROFILE", "APPDATA", "LOCALAPPDATA", "USERNAME")
 
 
 # ── plumbing ─────────────────────────────────────────────────────────────────
@@ -101,21 +102,10 @@ def git_as_polaris(*args: str, cwd: Path = REPO) -> str:
 def run_lock(wait_s: int = 1800):
     """The same lock cron_manage.sh holds while a task runs: a deploy or a
     revert never swaps code out from under a live sweep."""
-    LOCK.parent.mkdir(parents=True, exist_ok=True)
-    with LOCK.open("a") as fh:
-        deadline = time.monotonic() + wait_s
-        while True:
-            try:
-                fcntl.flock(fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
-                break
-            except BlockingIOError:
-                if time.monotonic() > deadline:
-                    raise TimeoutError("run lock held too long") from None
-                time.sleep(5)
-        try:
-            yield
-        finally:
-            fcntl.flock(fh, fcntl.LOCK_UN)
+    from core import runlock  # fcntl on POSIX, msvcrt on Windows
+
+    with runlock.hold(LOCK, wait_s):
+        yield
 
 
 def sandbox_env(tree: Path) -> dict[str, str]:
@@ -127,7 +117,7 @@ def sandbox_env(tree: Path) -> dict[str, str]:
     (sb / "ENABLED").write_text("off\n")
     base = agent_run._child_env()
     env = {k: base[k] for k in _SANDBOX_KEEP if k in base}
-    env["PATH"] = f"{Path(PY).parent}:{env.get('PATH', '/usr/bin:/bin')}"
+    env["PATH"] = f"{Path(PY).parent}{os.pathsep}{env.get('PATH', '/usr/bin:/bin')}"
     env.update(
         ESPN_SWID="{00000000-0000-0000-0000-000000000000}", ESPN_S2="sandbox",
         ESPN_LEAGUE_ID="1", ESPN_SEASON=str(CFG.season), ESPN_TEAM_NAME="sandbox",
@@ -230,6 +220,15 @@ def _evidence(wt: Path, issues: list[I.Issue], log_text: str, since: datetime) -
         f"lint:   {PY} -m ruff check .\n")
 
 
+def _abs_rule(p: Path) -> str:
+    """An absolute path in Claude Code's permission syntax: `//` + POSIX form.
+    On the box that is `/` + the path; Windows paths become `//c/Users/...`."""
+    s = Path(p).as_posix()
+    if os.name == "nt" and len(s) > 1 and s[1] == ":":
+        s = "/" + s[0].lower() + s[2:]
+    return "/" + s
+
+
 def call_agent(wt: Path, env: dict[str, str],
                issues: list[I.Issue]) -> tuple[dict | None, str, float | None]:
     schema = json.dumps(json.loads((REPO / "agent/schemas/repair.json").read_text()),
@@ -241,7 +240,9 @@ def call_agent(wt: Path, env: dict[str, str],
     ])
     denied = ",".join([
         "WebFetch", "WebSearch", "Bash(git commit:*)", "Bash(git push:*)",
-        f"Read(/{REPO}/.env)", f"Read(/{DATA}/**)",
+        f"Read({_abs_rule(REPO / '.env')})", f"Read({_abs_rule(DATA)}/**)",
+        # On the laptop the credentials live outside the repo (prod/secrets).
+        *([f"Read({_abs_rule(Path(d))}/**)"] if (d := os.environ.get("PROD_SECRETS_DIR")) else []),
     ])
     cmd = [
         CFG.claude_bin, "-p",

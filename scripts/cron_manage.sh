@@ -13,7 +13,8 @@
 set -uo pipefail
 cd "$(dirname "$0")/.." || exit 1
 export PATH="$HOME/.npm-global/bin:$PATH"
-PY=./.venv/bin/python
+# The venv's python: bin/ on the box, Scripts/ on Windows.
+PY=./.venv/bin/python; [ -x "$PY" ] || PY=./.venv/Scripts/python.exe
 LOG=data/manager.log
 TASK="${1:-sweep}"
 TS="$(date -Is)"
@@ -24,19 +25,26 @@ echo "$TS ── $TASK (ENABLED=$(cat ENABLED 2>/dev/null))" >> "$LOG"
 # The run lock. scripts/repair.py takes it to deploy or revert, so code is
 # never swapped out from under a running sweep. A task waits up to 30 min.
 mkdir -p data/repair
-exec 9>data/run.lock
-flock -w 1800 9 || echo "$(date -Is) ⚠️ run lock wait timed out — running anyway" >> "$LOG"
+# No flock binary (Git Bash on Windows): core.runlock holds the same lock
+# around each command instead, with the same 30-min wait.
+LOCKED=""
+if command -v flock >/dev/null 2>&1; then
+  exec 9>data/run.lock
+  flock -w 1800 9 || echo "$(date -Is) ⚠️ run lock wait timed out — running anyway" >> "$LOG"
+else
+  LOCKED="$PY -m core.runlock data/run.lock 1800 --"
+fi
 
 case "$TASK" in
-  research) $PY scripts/research_week.py >> "$LOG" 2>&1 ;;
-  sweep)    $PY scripts/manage.py >> "$LOG" 2>&1 ;;
-  tuesday)  $PY scripts/manage.py --tuesday >> "$LOG" 2>&1
-            $PY scripts/manage.py >> "$LOG" 2>&1 ;;
-  lineup)   $PY scripts/manage.py --task lineup >> "$LOG" 2>&1 ;;
+  research) $LOCKED $PY scripts/research_week.py >> "$LOG" 2>&1 ;;
+  sweep)    $LOCKED $PY scripts/manage.py >> "$LOG" 2>&1 ;;
+  tuesday)  $LOCKED $PY scripts/manage.py --tuesday >> "$LOG" 2>&1
+            $LOCKED $PY scripts/manage.py >> "$LOG" 2>&1 ;;
+  lineup)   $LOCKED $PY scripts/manage.py --task lineup >> "$LOG" 2>&1 ;;
   *) echo "usage: $0 research|sweep|tuesday|lineup" >&2; exit 2 ;;
 esac
 RC=$?
-flock -u 9
+[ -z "$LOCKED" ] && flock -u 9
 if [ "$RC" -ne 0 ] || tail -c "+$((OFFSET + 1))" "$LOG" | grep -qE 'capacity: '; then
   echo "$(date -Is) ⚠️ $TASK FAILED (rc=$RC)" >> "$LOG"
   # Carry the reason, not a pointer. "see data/manager.log on the box" is what
