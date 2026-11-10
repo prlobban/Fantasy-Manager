@@ -101,7 +101,9 @@ def settings(reload: bool = False) -> Settings:
     if _cached is not None and not reload:
         return _cached
 
-    load_dotenv(REPO_ROOT / ".env", override=False)
+    # FANTASY_DOTENV: the env file when it lives outside the repo (the laptop
+    # keeps credentials in prod/secrets). Default: the box's .env.
+    load_dotenv(os.environ.get("FANTASY_DOTENV") or (REPO_ROOT / ".env"), override=False)
 
     data_dir = Path(os.environ.get("DATA_DIR", REPO_ROOT / "data"))
     if not data_dir.is_absolute():

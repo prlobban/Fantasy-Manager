@@ -180,6 +180,8 @@ def _write_mcp_config(path: Path) -> Path:
     for server in base.get("mcpServers", {}).values():
         server["command"] = sys.executable
         server.setdefault("env", {})["PYTHONPATH"] = str(REPO_ROOT)
+        if dotenv := __import__("os").environ.get("FANTASY_DOTENV"):  # a path, not a secret
+            server["env"]["FANTASY_DOTENV"] = dotenv
     path.write_text(json.dumps(base, indent=1), encoding="utf-8")
     return path
 
