@@ -102,10 +102,15 @@ TASKS: dict[str, TaskSpec] = {
 
     # D1 / D3.1 — the in-season morning research. Same shape as the pre-draft
     # dossier: the web and nothing else, no doctrine, three searches + the
-    # answer. max_turns = searches + 2, measured on the draft pass.
+    # answer. max_turns = searches + 2, measured on the draft pass. Raised 7 → 9
+    # on 2026-11-11: 13 of 1,305 runs died on "Reached maximum number of turns
+    # (7)" with the dossier unwritten, four of them in the five mornings to
+    # 11-11. The prompt still says three searches, so a run that obeys it costs
+    # the same; the headroom is only spent by the runs that were paying full
+    # price for nothing.
     "weekly_dossier": TaskSpec(
         "weekly_dossier.md", "weekly_dossier.json", "WebSearch", False, False,
-        max_turns=7, model="research"),
+        max_turns=9, model="research"),
 
     # §3.10 — judgment between our turns. Reads a packet, returns JSON. It gets
     # the doctrine (it cites sections) and no tools whatsoever.
@@ -390,7 +395,15 @@ def run(task: str, packet: dict, *, dry_run: bool = False,
 
     # The support agent learned this the hard way: claude can print a capacity
     # notice and still exit 0. Sniff the output, don't trust the exit code.
-    lowered = raw.lower()
+    #
+    # But sniff the CLI's words, never the model's. 2026-11-11 the sweep ended
+    # clean (is_error false, a full structured answer) and its summary said
+    # trades were "refused on value and the daily rate limit" -- §6.1's
+    # one-a-day cap -- so the whole answer, benching an OUT Jefferson with it,
+    # was discarded as "capacity: rate limit". A run that delivered an answer
+    # and no error flag has said nothing about capacity or auth.
+    answered = not _envelope_is_error(raw) and _extract(raw) is not None
+    lowered = "" if answered else raw.lower()
     for marker in ("session limit", "usage limit", "weekly limit", "rate limit",
                    "credit balance", "overloaded"):
         if marker in lowered:
@@ -482,7 +495,22 @@ def _cli_message(raw: str) -> str | None:
     if not isinstance(outer, dict):
         return None
     msg = outer.get("result")
-    return msg.strip() if isinstance(msg, str) and msg.strip() else None
+    if isinstance(msg, str) and msg.strip():
+        return msg.strip()
+    # error_max_turns writes no "result" at all; its reason is in "errors".
+    # Without this a dossier that ran out of turns alerted as "(no stderr; see
+    # transcript)" every morning for a week.
+    errs = [e.strip() for e in outer.get("errors") or [] if isinstance(e, str) and e.strip()]
+    return "; ".join(errs) or None
+
+
+def _envelope_is_error(raw: str) -> bool:
+    """Whether the CLI flagged the run as failed. Unparseable counts as failed."""
+    try:
+        outer = json.loads(raw)
+    except (json.JSONDecodeError, TypeError, ValueError):
+        return True
+    return not isinstance(outer, dict) or bool(outer.get("is_error"))
 
 
 def _api_status(raw: str) -> int | None:

@@ -112,6 +112,52 @@ def test_stderr_still_speaks_when_there_is_no_envelope(monkeypatch, tmp_path):
     assert res.error == "claude exited 1: Error: unknown option '--bogus'"
 
 
+# ── 2026-11-11: the model said "rate limit", the CLI did not ─────────────────
+
+# The shape of data/agent-runs/20261111T133015-daily.json, trimmed: a clean
+# run whose summary quoted §6.1's daily trade cap. It was discarded as capacity.
+def _answered(summary: str) -> str:
+    answer = {"actions": [], "summary": summary}
+    return json.dumps({
+        "type": "result", "subtype": "success", "is_error": False,
+        "terminal_reason": "completed", "api_error_status": None,
+        "result": json.dumps(answer), "structured_output": answer,
+    })
+
+
+def test_a_clean_answer_that_quotes_a_marker_is_not_capacity(monkeypatch, tmp_path):
+    out = _answered("no adds and no trades, both refused on value and the daily rate limit.")
+    res = _run_with(monkeypatch, tmp_path, out, rc=0)
+    assert not (res.error or "").startswith("capacity:")
+
+
+def test_a_clean_answer_that_quotes_login_is_not_auth(monkeypatch, tmp_path):
+    out = _answered("the beat writer said to please run /login on the team app")
+    res = _run_with(monkeypatch, tmp_path, out, rc=0)
+    assert not (res.error or "").startswith("auth:")
+
+
+def test_a_flagged_capacity_notice_still_trips_without_a_429(monkeypatch, tmp_path):
+    out = json.dumps({"type": "result", "is_error": True,
+                      "result": "Claude AI usage limit reached|1794420000"})
+    res = _run_with(monkeypatch, tmp_path, out, rc=0)
+    assert res.error == "capacity: usage limit"
+
+
+def test_a_plain_text_capacity_notice_still_trips(monkeypatch, tmp_path):
+    res = _run_with(monkeypatch, tmp_path, "Claude AI usage limit reached\n", rc=0)
+    assert res.error == "capacity: usage limit"
+
+
+def test_running_out_of_turns_names_itself(monkeypatch, tmp_path):
+    # data/agent-runs/20261111T130012-weekly_dossier.json, trimmed.
+    out = json.dumps({"type": "result", "subtype": "error_max_turns", "is_error": True,
+                      "terminal_reason": "max_turns",
+                      "errors": ["Reached maximum number of turns (7)"]})
+    res = _run_with(monkeypatch, tmp_path, out)
+    assert res.error == "claude exited 1: Reached maximum number of turns (7)"
+
+
 # ── pre-flight ───────────────────────────────────────────────────────────────
 
 class _Proc:
